@@ -45,6 +45,7 @@ from nanobot.bus.queue import MessageBus  # noqa: E402
 from nanobot.config.loader import load_config  # noqa: E402
 from nanobot.nanobot import Nanobot, _make_provider  # noqa: E402
 
+from self_heal_hook import SelfHealHook  # noqa: E402
 from stock_tools import load_all as load_stock_tools  # noqa: E402
 
 # app_chainlit 依赖 WORKSPACE，这里显式 re-export 保持兼容
@@ -117,7 +118,12 @@ def build_bot() -> Nanobot:
 
 
 async def _run_once(bot: Nanobot, question: str, session_key: str = "stock:cli") -> None:
-    result = await bot.run(question, session_key=session_key, hooks=[PrintHook()])
+    # SelfHealHook 放在 PrintHook 之后，保证 before_execute_tools 的打印先于 healer 行动
+    result = await bot.run(
+        question,
+        session_key=session_key,
+        hooks=[PrintHook(), SelfHealHook()],
+    )
     print("\n" + "=" * 60)
     print(result.content)
     print("=" * 60)

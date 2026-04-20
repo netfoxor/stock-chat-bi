@@ -24,6 +24,7 @@ from pathlib import Path
 import chainlit as cl
 
 from nanobot.agent.hook import AgentHook, AgentHookContext
+from self_heal_hook import SelfHealHook
 from stock_bot import WORKSPACE, build_bot
 
 # 匹配工具产出的两种图表引用：
@@ -209,7 +210,12 @@ async def on_message(message: cl.Message) -> None:
         return
 
     hook = ChainlitHook()
-    result = await bot.run(message.content, session_key=session_key, hooks=[hook])
+    healer = SelfHealHook()
+    result = await bot.run(
+        message.content,
+        session_key=session_key,
+        hooks=[hook, healer],
+    )
 
     # LLM 最后的文字总结：同样尝试解析是否带图表（以防万一 LLM 真的复述了）
     final_text, final_elements = _split_markdown_and_elements(result.content or "")
