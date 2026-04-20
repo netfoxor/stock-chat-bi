@@ -68,8 +68,6 @@ plt.rcParams["font.sans-serif"] = [
 plt.rcParams["axes.unicode_minus"] = False
 
 # 业务常量
-BAR_ROW_THRESHOLD = 20
-PLOT_X_SAMPLE_POINTS = 10
 ARIMA_ORDER = (5, 1, 5)
 MIN_ARIMA_OBS = 80
 MAX_FORECAST_DAYS = 60
@@ -85,14 +83,6 @@ MIN_BOLL_ROWS = 25
 def _is_read_only_sql(sql: str) -> bool:
     s = sql.strip().lstrip("(").strip().upper()
     return s.startswith("SELECT") or s.startswith("WITH")
-
-
-def _df_for_plot_line(df: pd.DataFrame, max_x_points: int) -> pd.DataFrame:
-    n = len(df)
-    if n <= max_x_points:
-        return df.copy()
-    idx = np.unique(np.linspace(0, n - 1, max_x_points, dtype=int))
-    return df.iloc[idx].reset_index(drop=True)
 
 
 def _safe_label(s: Any) -> str:
@@ -127,56 +117,253 @@ def _build_result_markdown(df: pd.DataFrame) -> str:
     return "\n".join(parts)
 
 
-def _generate_chart_png(df_sql: pd.DataFrame, save_path: str, *, use_line: bool) -> None:
-    columns = df_sql.columns
-    object_columns = df_sql.select_dtypes(include="O").columns.tolist()
-    if columns[0] in object_columns:
-        object_columns.remove(columns[0])
-    num_columns = df_sql.select_dtypes(exclude="O").columns.tolist()
+# --------------------------------------------------------------------------- #
+# 智能绘图
+#
+# 设计思路：
+#   - 识别日期列（trade_date/date/datetime）为 x 轴
+#   - 剔除整列同值的 object 列（ts_code/stock_name 这种重复值，不参与绘图）
+#   - 如果同时包含 OHLC 至少两列 → 金融模式：K 线 / 价格折线 + 成交量副图
+#   - 否则按"量纲族"分组到多个子图，避免 amount(10⁶) 压扁 pct_chg(<10%)
+# --------------------------------------------------------------------------- #
 
-    fig, ax = plt.subplots(figsize=(10, 6))
-    if len(object_columns) > 0:
-        pivot_df = df_sql.pivot_table(
-            index=columns[0], columns=object_columns, values=num_columns, fill_value=0
-        )
-        x_pos = np.arange(len(pivot_df))
-        if use_line:
-            for col in pivot_df.columns:
-                ax.plot(x_pos, pivot_df[col].to_numpy(), marker="o", markersize=4,
-                        label=_safe_label(col))
-            ax.set_xticks(x_pos)
-            ax.set_xticklabels([_safe_label(i) for i in pivot_df.index], rotation=45, ha="right")
+# 列语义识别（不区分大小写）
+_PRICE_COLS = {"open", "high", "low", "close", "pre_close"}
+_VOLUME_COLS = {"vol", "volume"}
+_AMOUNT_COLS = {"amount", "turnover"}
+_PCT_COLS = {"pct_chg", "pct_change", "change_pct", "pctchg"}
+_CHANGE_COLS = {"change", "chg"}
+_DATE_COLS = {"trade_date", "date", "datetime", "dt", "day"}
+
+
+def _detect_date_col(df: pd.DataFrame) -> str | None:
+    for c in df.columns:
+        if str(c).lower() in _DATE_COLS:
+            return c
+    # 兜底：第一列是 object 且能被解析为日期
+    first = df.columns[0]
+    if df[first].dtype == "O":
+        try:
+            pd.to_datetime(df[first].head(5), errors="raise")
+            return first
+        except Exception:
+            return None
+    return None
+
+
+def _drop_constant_object_cols(df: pd.DataFrame, exclude: set[str]) -> pd.DataFrame:
+    """丢弃整列只有一个唯一值的 object 列（如 ts_code、stock_name）。"""
+    drop_cols = []
+    for c in df.columns:
+        if c in exclude:
+            continue
+        if df[c].dtype == "O" and df[c].nunique(dropna=True) <= 1:
+            drop_cols.append(c)
+    return df.drop(columns=drop_cols) if drop_cols else df
+
+
+def _group_numeric_cols(cols: list[str]) -> dict[str, list[str]]:
+    """把数值列按语义分组；未识别的归入 'other'，保留画图顺序。"""
+    groups: dict[str, list[str]] = {
+        "price": [], "volume": [], "amount": [],
+        "pct": [], "change": [], "other": [],
+    }
+    for c in cols:
+        lc = str(c).lower()
+        if lc in _PRICE_COLS:
+            groups["price"].append(c)
+        elif lc in _VOLUME_COLS:
+            groups["volume"].append(c)
+        elif lc in _AMOUNT_COLS:
+            groups["amount"].append(c)
+        elif lc in _PCT_COLS:
+            groups["pct"].append(c)
+        elif lc in _CHANGE_COLS:
+            groups["change"].append(c)
         else:
-            bottoms = None
-            for col in pivot_df.columns:
-                ax.bar(pivot_df.index, pivot_df[col], bottom=bottoms, label=_safe_label(col))
-                bottoms = pivot_df[col].copy() if bottoms is None else bottoms + pivot_df[col]
-            plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha="right")
+            groups["other"].append(c)
+    return {k: v for k, v in groups.items() if v}
+
+
+def _plot_candlestick(ax, x, o, h, low, c, *, width: float = 0.6) -> None:
+    """朴素 K 线图（不依赖 mplfinance）：红涨绿跌。"""
+    up = c >= o
+    colors_body = np.where(up, "#d9534f", "#5cb85c")  # 红涨绿跌（A 股风格）
+    colors_wick = colors_body
+    # 影线
+    ax.vlines(x, low, h, colors=colors_wick, linewidth=0.8, zorder=2)
+    # 实体
+    body_bottom = np.minimum(o, c)
+    body_height = np.abs(c - o)
+    # height 为 0 时用极小值避免不可见
+    body_height = np.where(body_height < 1e-9, (h - low) * 0.02 + 1e-6, body_height)
+    ax.bar(x, body_height, bottom=body_bottom, width=width,
+           color=colors_body, edgecolor=colors_body, zorder=3, align="center")
+
+
+def _plot_stock_auto(df_sql: pd.DataFrame, save_path: str, *, max_rows: int = 260) -> str:
+    """
+    智能绘图入口。返回用于 markdown 说明的"图表类型"文案。
+    约定：对 DataFrame 做副本，不改动调用方传入的对象。
+    """
+    df = df_sql.copy()
+    date_col = _detect_date_col(df)
+    df = _drop_constant_object_cols(df, exclude={date_col} if date_col else set())
+
+    # 确定 x 轴
+    if date_col is not None:
+        try:
+            df[date_col] = pd.to_datetime(df[date_col])
+            df = df.sort_values(date_col)
+        except Exception:
+            pass
+        x_values = df[date_col]
+        x_label = "日期"
     else:
-        x = np.arange(len(df_sql))
-        if use_line:
-            for column in columns[1:]:
-                ax.plot(x, df_sql[column].to_numpy(), marker="o", markersize=4,
-                        label=_safe_label(column))
-            ax.set_xticks(x)
-            ax.set_xticklabels([_safe_label(v) for v in df_sql[columns[0]]],
-                               rotation=45, ha="right")
-        else:
-            bottom = np.zeros(len(df_sql))
-            for column in columns[1:]:
-                ax.bar(x, df_sql[column], bottom=bottom, label=_safe_label(column))
-                bottom += df_sql[column]
-            ax.set_xticks(x)
-            ax.set_xticklabels([_safe_label(v) for v in df_sql[columns[0]]],
-                               rotation=45, ha="right")
+        x_values = pd.Series(np.arange(len(df)))
+        x_label = str(df.columns[0])
 
-    ax.legend()
-    ax.set_title("股票查询结果（折线图）" if use_line else "股票查询结果（柱状图）")
-    ax.set_xlabel(_safe_label(columns[0]))
-    ax.set_ylabel("数值")
+    # 数据量过大时降采样，保证图像清晰
+    if len(df) > max_rows:
+        idx = np.unique(np.linspace(0, len(df) - 1, max_rows, dtype=int))
+        df = df.iloc[idx].reset_index(drop=True)
+        x_values = x_values.iloc[idx].reset_index(drop=True) \
+            if hasattr(x_values, "iloc") else x_values[idx]
+
+    num_cols = [c for c in df.columns
+                if c != date_col and pd.api.types.is_numeric_dtype(df[c])]
+    if not num_cols:
+        # 没有数值列可画，画一个空图占位
+        fig, ax = plt.subplots(figsize=(8, 3))
+        ax.text(0.5, 0.5, "无可绘数值列", ha="center", va="center")
+        ax.set_axis_off()
+        fig.savefig(save_path, bbox_inches="tight")
+        plt.close(fig)
+        return "占位图"
+
+    groups = _group_numeric_cols(num_cols)
+
+    # ------------------- 金融模式：OHLC + 量价 ------------------- #
+    has_ohlc = {"open", "high", "low", "close"}.issubset(
+        {str(c).lower() for c in groups.get("price", [])}
+    )
+    has_price_line = len(groups.get("price", [])) >= 1
+
+    if date_col is not None and has_price_line:
+        # 确定副图：volume / amount / pct / change（最多 3 个副图）
+        sub_keys = [k for k in ("volume", "amount", "pct", "change") if k in groups][:3]
+        n_axes = 1 + len(sub_keys)
+        heights = [3.0] + [1.0] * len(sub_keys)
+        fig, axes = plt.subplots(
+            n_axes, 1, figsize=(12, 2.2 * sum(heights) / max(heights)),
+            sharex=True, gridspec_kw={"height_ratios": heights},
+        )
+        if n_axes == 1:
+            axes = [axes]
+        ax_price = axes[0]
+
+        # 价格主图：OHLC → K 线；否则画收盘 + 可选高低区间填充
+        if has_ohlc:
+            lowers = {str(c).lower(): c for c in groups["price"]}
+            o = df[lowers["open"]].to_numpy(float)
+            h = df[lowers["high"]].to_numpy(float)
+            low_v = df[lowers["low"]].to_numpy(float)
+            c_v = df[lowers["close"]].to_numpy(float)
+            # x 轴：pandas DatetimeIndex 可直接传给 matplotlib
+            x_arr = x_values.to_numpy() if hasattr(x_values, "to_numpy") else np.asarray(x_values)
+            # 日级时 width 用天数为单位
+            width = 0.7
+            _plot_candlestick(ax_price, x_arr, o, h, low_v, c_v, width=width)
+            ax_price.set_title("K 线图（红涨绿跌）")
+        else:
+            # 退化：只有 close 之类 → 折线
+            price_cols = groups["price"]
+            for col in price_cols:
+                ax_price.plot(x_values, df[col], label=_safe_label(col), linewidth=1.2)
+            if {"high", "low"}.issubset({str(c).lower() for c in price_cols}):
+                lowers = {str(c).lower(): c for c in price_cols}
+                ax_price.fill_between(x_values, df[lowers["low"]], df[lowers["high"]],
+                                      color="C0", alpha=0.08, label="high-low 区间")
+            ax_price.set_title("价格走势")
+            ax_price.legend(loc="upper left", fontsize=8)
+        ax_price.set_ylabel("价格")
+        ax_price.grid(True, alpha=0.25)
+
+        # 副图：成交量 / 成交额 / 涨跌幅 / 涨跌额 —— 柱状图，涨跌配色
+        close_col = None
+        pre_close_col = None
+        for c in groups["price"]:
+            lc = str(c).lower()
+            if lc == "close":
+                close_col = c
+            elif lc == "pre_close":
+                pre_close_col = c
+
+        if close_col is not None:
+            if pre_close_col is not None:
+                up_mask = df[close_col].to_numpy() >= df[pre_close_col].to_numpy()
+            else:
+                # 用相邻收盘价判断涨跌
+                diff = df[close_col].diff().fillna(0).to_numpy()
+                up_mask = diff >= 0
+            bar_colors = np.where(up_mask, "#d9534f", "#5cb85c")
+        else:
+            bar_colors = "#888"
+
+        sub_titles = {
+            "volume": "成交量", "amount": "成交额",
+            "pct": "涨跌幅（%）", "change": "涨跌额",
+        }
+        for i, key in enumerate(sub_keys, start=1):
+            ax = axes[i]
+            col = groups[key][0]  # 取第一列即可（同族通常就一个）
+            ax.bar(x_values, df[col].to_numpy(), color=bar_colors, width=0.7, align="center")
+            ax.set_ylabel(sub_titles[key])
+            ax.grid(True, alpha=0.25)
+
+        axes[-1].set_xlabel(x_label)
+        fig.autofmt_xdate()
+        fig.suptitle(f"股票日线图（{len(df)} 个交易日）", y=0.995)
+        fig.tight_layout()
+        fig.savefig(save_path, dpi=110)
+        plt.close(fig)
+
+        base = "K 线图" if has_ohlc else "价格走势"
+        sub_titles = {"volume": "成交量", "amount": "成交额",
+                      "pct": "涨跌幅", "change": "涨跌额"}
+        if sub_keys:
+            return f"{base} + " + "/".join(sub_titles[k] for k in sub_keys)
+        return base
+
+    # ------------------- 通用模式：按量纲族分子图 ------------------- #
+    # 每个分组一个子图，避免量纲混画
+    keys = list(groups.keys())
+    n_axes = len(keys)
+    fig, axes = plt.subplots(n_axes, 1, figsize=(12, 2.6 * n_axes), sharex=True)
+    if n_axes == 1:
+        axes = [axes]
+
+    labels_map = {"price": "价格", "volume": "成交量", "amount": "成交额",
+                  "pct": "涨跌幅", "change": "涨跌额", "other": "数值"}
+    for ax, key in zip(axes, keys):
+        for col in groups[key]:
+            if date_col is not None:
+                ax.plot(x_values, df[col], label=_safe_label(col), linewidth=1.2, marker="o",
+                        markersize=3)
+            else:
+                ax.bar(x_values, df[col], label=_safe_label(col))
+        ax.set_ylabel(labels_map.get(key, key))
+        ax.legend(loc="upper left", fontsize=8)
+        ax.grid(True, alpha=0.25)
+
+    axes[-1].set_xlabel(x_label)
+    if date_col is not None:
+        fig.autofmt_xdate()
+    fig.suptitle("查询结果（按量纲分组）", y=0.995)
     fig.tight_layout()
-    fig.savefig(save_path)
+    fig.savefig(save_path, dpi=110)
     plt.close(fig)
+    return "多子图折线"
 
 
 def _load_year_history(ts_code: str) -> pd.DataFrame | None:
@@ -357,21 +544,17 @@ class ExcSQLTool(Tool):
         if df.shape[1] < 2:
             return md
 
-        n = len(df)
-        use_line = n > BAR_ROW_THRESHOLD
-        prefix = "stock_line" if use_line else "stock_bar"
-        filename = f"{prefix}_{int(time.time() * 1000)}.png"
+        filename = f"stock_chart_{int(time.time() * 1000)}.png"
         save_path = IMAGE_DIR / filename
 
-        df_plot = _df_for_plot_line(df, PLOT_X_SAMPLE_POINTS) if use_line else df
-        await asyncio.to_thread(_generate_chart_png, df_plot, str(save_path), use_line=use_line)
+        try:
+            chart_name = await asyncio.to_thread(_plot_stock_auto, df, str(save_path))
+        except Exception as e:
+            # 绘图失败不影响数据返回
+            return f"{md}\n\n*（绘图失败：{e}）*"
 
-        chart_name = "折线图" if use_line else "柱状图"
-        note = ""
-        if use_line and n > PLOT_X_SAMPLE_POINTS:
-            note = f"\n\n*（折线图横轴从 {n} 条结果中均匀抽取 {len(df_plot)} 个点展示）*"
         img_md = f"![{chart_name}](image_show/{filename})"
-        return f"{md}\n\n{img_md}{note}"
+        return f"{md}\n\n{img_md}"
 
 
 class BollDetectionTool(Tool):

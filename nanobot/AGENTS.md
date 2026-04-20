@@ -29,6 +29,16 @@
 - 不要使用 `INSERT/UPDATE/DELETE/DROP/ALTER` 等写操作。
 - 先探明需求再写查询，必要时先做一次小结构查询（例如 `SELECT DISTINCT stock_name FROM stock_daily LIMIT 5`）确认数据存在。
 
+### SELECT 列的最佳实践
+
+工具会根据返回列自动选图表样式——**列选得准，图才漂亮**：
+
+- **看走势/K 线** → `SELECT trade_date, open, high, low, close, vol, amount FROM ...`（工具识别到 OHLC 会自动画 **K 线图 + 量能副图**）
+- **只看收盘** → `SELECT trade_date, close FROM ...`（画价格折线）
+- **看涨跌幅** → `SELECT trade_date, pct_chg FROM ...`
+- **尽量避免 `SELECT *`**：会把 `ts_code`、`stock_name` 等文本列带进来，也会把量纲差异极大的字段（成交额 10⁶ 与涨跌幅 <10%）混画到一起。
+- **多股票对比** → 同时 SELECT 多行不同 `ts_code`，工具会把每只股票画成独立曲线。
+
 ## 分工
 
 - 日线统计、涨跌幅、区间价格走势 —— 用 `exc_sql`
