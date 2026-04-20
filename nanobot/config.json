@@ -17,7 +17,10 @@
   },
   "tools": {
     "web": { "enable": false },
-    "exec": { "enable": false },
+    "exec": {
+      "enable": true,
+      "timeout": 120
+    },
     "restrict_to_workspace": false
   }
 }

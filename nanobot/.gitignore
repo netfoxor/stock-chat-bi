@@ -1,4 +1,5 @@
-sessions/*
-memory/*
-__pycache__/*
-.files/*
+sessions/
+memory/
+__pycache__/
+.files/
+charts/
