@@ -38,8 +38,26 @@ metadata: {"nanobot":{"emoji":"🗃️","requires":{"bins":["python"]}}}
 
 - 只允许以 `SELECT` 或 `WITH ... SELECT` 开头；`exc_sql` 会拒绝其他语句
 - **始终带 `ORDER BY trade_date`**（或需要的字段），避免 SQLite 乱序
-- 涉及日期过滤用 `trade_date >= 'YYYY-MM-DD' AND trade_date <= 'YYYY-MM-DD'`
 - 排行榜记得用 `LIMIT N`
+
+### ⚠️ 日期格式（最常见的翻车点）
+
+`trade_date` 列是 **`YYYY-MM-DD` 带连字符的字符串**（SQLite TEXT），**不是** Tushare 原始的 `yyyymmdd` 整数格式。**任何日期字面量都必须带连字符**，否则字符串比较会匹配不到任何行。
+
+✅ 正确：
+
+```sql
+WHERE trade_date >= '2025-01-01' AND trade_date <= '2025-12-31'
+-- 或
+WHERE trade_date BETWEEN '2025-01-01' AND '2025-12-31'
+```
+
+❌ 错误（会返回 0 行，`exc_sql` 会直接拦截并报错）：
+
+```sql
+WHERE trade_date BETWEEN '20250101' AND '20251231'        -- 无连字符
+WHERE trade_date >= 20250101                               -- 无引号 + 无连字符
+```
 
 ## SELECT 列最佳实践（**直接影响图表质量**）
 

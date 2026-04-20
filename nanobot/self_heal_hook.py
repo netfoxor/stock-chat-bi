@@ -113,6 +113,33 @@ _EXEC_ERROR_SIGNATURES: tuple[HealPattern, ...] = (
             "  4. 如果连续 2 次都失败，直接把错误原文告诉用户并建议修改问题，**不要无限重试**\n"
         ),
     ),
+    HealPattern(
+        key="exc_sql-bad-date-format",
+        patterns=(
+            re.compile(r"日期格式不对", re.I),
+            re.compile(r"Tushare 旧格式", re.I),
+            re.compile(r"yyyymmdd", re.I),
+        ),
+        hint=(
+            "❌ 你写的 SQL 里日期用了 `yyyymmdd` 无分隔符格式。\n"
+            "🛠 `trade_date` 是 `YYYY-MM-DD` 带连字符字符串，严格按下面模板改：\n"
+            "  ✅ 正确：`WHERE trade_date >= '2025-01-01' AND trade_date <= '2025-12-31'`\n"
+            "  ❌ 错误：`WHERE trade_date BETWEEN '20250101' AND '20251231'`\n"
+            "  ❌ 错误：`WHERE trade_date >= 20250101`（无引号无连字符）\n"
+            "照模板改完**立即重新调用 `exc_sql`**。"
+        ),
+    ),
+    HealPattern(
+        key="exc_sql-empty-result",
+        patterns=(
+            re.compile(r"查询结果为空（0 行）。可能原因[:：]", re.I),
+        ),
+        hint=(
+            "❌ 上一条 SQL 返回 0 行。tool 已列出常见原因（日期格式、未来日期、ts_code 格式），"
+            "请**按提示修改 SQL 后重试一次**。\n"
+            "如果修完仍 0 行，说明数据库里确实没有对应数据：**不要无限改 SQL**，直接告诉用户。"
+        ),
+    ),
 )
 
 
@@ -120,7 +147,7 @@ _EXEC_ERROR_SIGNATURES: tuple[HealPattern, ...] = (
 # Hook 实现
 # --------------------------------------------------------------------------- #
 
-_WATCH_TOOLS = {"exec"}  # 目前只保护 exec；将来可扩到 web / shell 等
+_WATCH_TOOLS = {"exec", "exc_sql"}  # 目前保护 exec + exc_sql
 
 
 class SelfHealHook(AgentHook):

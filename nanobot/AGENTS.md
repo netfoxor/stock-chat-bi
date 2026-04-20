@@ -14,6 +14,10 @@
 **任何涉及数据库查询、画图的需求**：先 `read_file` 打开 `skills/stock-sql/SKILL.md` 获取表结构与模板，再组装 SQL 调 `exc_sql`。
 **预测或布林带**：先 `read_file` 打开对应 `skills/<name>/SKILL.md`，按里面给出的命令用 `exec` 工具调脚本。
 
+## ⚠️ 一条硬规定：日期字面量必须带连字符
+
+本库 `trade_date` 列是 `YYYY-MM-DD` 带连字符的字符串。**任何时候都写 `'2025-01-01'`，绝不能写 `'20250101'`**——后者是 Tushare 原始格式，本库不吃，会返回 0 行或被 `exc_sql` 直接拒绝。
+
 ## `exec` 调用防呆规则（Windows 环境）
 
 调任何 skill 脚本（arima-forecast / bollinger）时，**严格遵守**：
