@@ -24,49 +24,89 @@ from pathlib import Path
 import chainlit as cl
 
 from nanobot.agent.hook import AgentHook, AgentHookContext
-from stock_bot import IMAGE_DIR, WORKSPACE, build_bot
+from stock_bot import WORKSPACE, build_bot
 
-# 匹配 ![alt](image_show/xxx.png) 或绝对路径的图片 markdown
-IMAGE_MD_RE = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
+# 匹配工具产出的两种图表引用：
+#   * ECharts 自定义元素：![alt](chart:charts/xxx.json)
+#   * 传统静态图片    ：![alt](image_show/xxx.png)（遗留兼容）
+CHART_MD_RE = re.compile(r"!\[([^\]]*)\]\(chart:([^)]+)\)")
+IMAGE_MD_RE = re.compile(r"!\[([^\]]*)\]\(((?!chart:)[^)]+)\)")
 
 
-def _resolve_image(ref: str) -> Path | None:
-    """把工具返回的图片引用解析成磁盘绝对路径。"""
+def _resolve_path(ref: str) -> Path | None:
+    """把工具返回的文件引用解析成磁盘绝对路径。"""
     p = Path(ref)
     if p.is_absolute() and p.exists():
         return p
     candidate = (WORKSPACE / ref).resolve()
     if candidate.exists():
         return candidate
-    # 兜底：尝试按文件名在 IMAGE_DIR 里找
-    candidate = IMAGE_DIR / Path(ref).name
-    return candidate if candidate.exists() else None
+    return None
 
 
-def _split_text_and_images(md: str) -> tuple[str, list[cl.Image]]:
-    """从 markdown 抽出所有图片为 cl.Image 附件，并从文本中删除图片标记。"""
-    images: list[cl.Image] = []
+def _load_echart_option(ref: str) -> dict | None:
+    path = _resolve_path(ref)
+    if path is None or not path.is_file():
+        return None
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _split_markdown_and_elements(md: str) -> tuple[str, list]:
+    """
+    从 markdown 抽出所有图表/图片引用为 Chainlit elements，并从文本中删除对应标记。
+
+    识别顺序：先 ECharts（chart: 前缀），再普通图片。
+    """
+    elements: list = []
     seen: set[str] = set()
 
+    # 1) ECharts 自定义元素
+    for m in CHART_MD_RE.finditer(md):
+        alt, ref = m.group(1), m.group(2)
+        key = f"chart::{ref}"
+        if key in seen:
+            continue
+        seen.add(key)
+        option = _load_echart_option(ref)
+        if option is None:
+            continue
+        elements.append(
+            cl.CustomElement(
+                name="EChart",
+                props={
+                    "option": option,
+                    "height": 560,
+                    "title": alt or "",
+                },
+                display="inline",
+            )
+        )
+
+    # 2) 普通图片兜底
     for m in IMAGE_MD_RE.finditer(md):
         alt, ref = m.group(1), m.group(2)
         if ref in seen:
             continue
         seen.add(ref)
-        path = _resolve_image(ref)
+        path = _resolve_path(ref)
         if path is None:
             continue
-        images.append(
+        elements.append(
             cl.Image(
                 path=str(path),
                 name=alt or path.name,
-                display="inline",  # 在消息正文下方原尺寸展示
+                display="inline",
                 size="large",
             )
         )
 
-    cleaned = IMAGE_MD_RE.sub("", md).strip()
-    return cleaned, images
+    cleaned = CHART_MD_RE.sub("", md)
+    cleaned = IMAGE_MD_RE.sub("", cleaned).strip()
+    return cleaned, elements
 
 
 def _stringify_tool_result(result) -> str:
@@ -119,13 +159,13 @@ class ChainlitHook(AgentHook):
             step.output = result_str
             await step.update()
 
-            # 2) 主聊天流：表格+说明 + 图片附件，永远可见
-            body, images = _split_text_and_images(result_str)
-            if body or images:
+            # 2) 主聊天流：表格+说明 + ECharts/图片附件，永远可见
+            body, elements = _split_markdown_and_elements(result_str)
+            if body or elements:
                 await cl.Message(
                     content=body or f"*（{name} 已生成图表）*",
                     author=name,
-                    elements=images,
+                    elements=elements,
                 ).send()
 
         self._pending_steps.clear()
@@ -169,10 +209,10 @@ async def on_message(message: cl.Message) -> None:
     hook = ChainlitHook()
     result = await bot.run(message.content, session_key=session_key, hooks=[hook])
 
-    # LLM 最后的文字总结：同样尝试解析是否带图片（以防万一 LLM 真的复述了）
-    final_text, final_images = _split_text_and_images(result.content or "")
-    if final_text or final_images:
+    # LLM 最后的文字总结：同样尝试解析是否带图表（以防万一 LLM 真的复述了）
+    final_text, final_elements = _split_markdown_and_elements(result.content or "")
+    if final_text or final_elements:
         await cl.Message(
             content=final_text or "(空结果)",
-            elements=final_images,
+            elements=final_elements,
         ).send()

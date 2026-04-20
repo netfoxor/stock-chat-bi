@@ -8,7 +8,7 @@
 
 ## 输出要求（非常重要）
 
-- 当 `exc_sql` / `arima_stock` / `boll_detection` 返回包含 **markdown 表格与图片**（`![xxx](image_show/xxx.png)`）时，**必须原样输出全部内容**，包括图片 markdown 本身，**不得省略、重写或转述**。
+- 当 `exc_sql` / `arima_stock` / `boll_detection` 返回包含 **markdown 表格与图表占位**（形如 `![xxx](chart:charts/xxx.json)`，前端会渲染为可缩放的 ECharts 图表）时，**必须原样输出全部内容**，包括图表 markdown 本身，**不得省略、重写或转述**。
 - 禁止把本地工具返回的结果再次改写或"总结"为纯文字摘要；先原样返回工具结果，再在最后用 1-3 句话作简短解读。
 - 如果工具返回了错误（以"错误："开头），需要向用户清晰说明错误原因，并建议如何修正。
 

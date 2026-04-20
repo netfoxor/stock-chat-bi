@@ -1,0 +1,4 @@
+sessions/*
+memory/*
+__pycache__/*
+.files/*
