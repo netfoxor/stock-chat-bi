@@ -11,7 +11,7 @@
 //
 // echarts 通过 CDN 懒加载（首次渲染时注入 <script>，后续复用）。
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 const ECHARTS_CDN =
   "https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js";
@@ -43,6 +43,20 @@ function loadECharts() {
   return echartsPromise;
 }
 
+// 检测 Chainlit 当前是否为深色主题。
+// Chainlit 切换主题时会在 <html> 上增减 class="dark"，并且同步更新
+// data-theme / color-scheme；这里三重兜底，只要任一命中就算 dark。
+function detectDark() {
+  if (typeof document === "undefined") return false;
+  const html = document.documentElement;
+  if (html.classList.contains("dark")) return true;
+  const dataTheme = html.getAttribute("data-theme");
+  if (dataTheme && dataTheme.toLowerCase() === "dark") return true;
+  const cs = html.style && html.style.colorScheme;
+  if (cs && cs.toLowerCase().includes("dark")) return true;
+  return false;
+}
+
 export default function EChart() {
   // Chainlit 在组件作用域内注入全局 props，这里直接取
   const option = props?.option;
@@ -52,6 +66,20 @@ export default function EChart() {
 
   const containerRef = useRef(null);
   const chartRef = useRef(null);
+  const [isDark, setIsDark] = useState(detectDark);
+
+  // 监听 <html> 上的 class / data-theme 变化，与 Chainlit 主题联动
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const html = document.documentElement;
+    const sync = () => setIsDark(detectDark());
+    const mo = new MutationObserver(sync);
+    mo.observe(html, {
+      attributes: true,
+      attributeFilter: ["class", "data-theme", "style"],
+    });
+    return () => mo.disconnect();
+  }, []);
 
   // 用 JSON 字符串作为 option 的稳定指纹，避免每次 render 重新初始化
   const optionKey = option ? JSON.stringify(option) : "";
@@ -74,11 +102,19 @@ export default function EChart() {
     loadECharts()
       .then((echarts) => {
         if (disposed || !containerRef.current) return;
-        const chart = echarts.init(containerRef.current, null, {
-          renderer: "canvas",
-        });
+        // echarts 5 自带 'dark' 内置主题；浅色传 null 即用默认
+        const chart = echarts.init(
+          containerRef.current,
+          isDark ? "dark" : null,
+          { renderer: "canvas" }
+        );
         chartRef.current = chart;
-        chart.setOption(option, true);
+        // 深色主题下把画布背景设为透明，避免盖住 Chainlit 的消息气泡底色
+        if (isDark) {
+          chart.setOption({ backgroundColor: "transparent", ...option }, true);
+        } else {
+          chart.setOption(option, true);
+        }
 
         window.addEventListener("resize", onResize);
         if (typeof ResizeObserver !== "undefined") {
@@ -103,7 +139,8 @@ export default function EChart() {
         chartRef.current = null;
       }
     };
-  }, [optionKey, height]);
+    // isDark 变化时需要销毁旧实例再用新主题重建（echarts 不支持动态切 theme）
+  }, [optionKey, height, isDark]);
 
   return (
     <div style={{ width: "100%" }}>
