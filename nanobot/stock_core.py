@@ -34,7 +34,11 @@ import pandas as pd
 
 # 不管从哪里 import 进来，WORKSPACE 永远指向 nanobot/
 WORKSPACE = Path(__file__).resolve().parent
-DB_PATH = (WORKSPACE.parent / "qwen-agent" / "stock_prices_history.db").resolve()
+
+# DB 路径：默认内置在 nanobot/data/，打包进镜像即可直接用；
+# 需要覆盖（换数据库文件、共享存储等）时通过环境变量 STOCK_DB_PATH 指定。
+_DEFAULT_DB = WORKSPACE / "data" / "stock_prices_history.db"
+DB_PATH = Path(os.environ.get("STOCK_DB_PATH", str(_DEFAULT_DB))).resolve()
 CHARTS_DIR = WORKSPACE / "charts"
 CHARTS_DIR.mkdir(parents=True, exist_ok=True)
 

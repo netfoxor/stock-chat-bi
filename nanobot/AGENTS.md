@@ -18,17 +18,17 @@
 
 本库 `trade_date` 列是 `YYYY-MM-DD` 带连字符的字符串。**任何时候都写 `'2025-01-01'`，绝不能写 `'20250101'`**——后者是 Tushare 原始格式，本库不吃，会返回 0 行或被 `exc_sql` 直接拒绝。
 
-## `exec` 调用防呆规则（Windows 环境）
+## `exec` 调用防呆规则
 
 调任何 skill 脚本（arima-forecast / bollinger）时，**严格遵守**：
 
 - **不要传 `working_dir` 参数**（默认 cwd 就是 `nanobot/`，够用）
-- **脚本用相对路径**：`skills\arima-forecast\scripts\forecast.py` / `skills\bollinger\scripts\detect.py`
+- **脚本路径统一用正斜杠**：`skills/arima-forecast/scripts/forecast.py` / `skills/bollinger/scripts/detect.py`（Windows、Linux、Docker 都认）
 - **command 里不加任何引号**（路径不含空格，加引号会触发 `\"` 解析错乱）
 - 参考模板（**照抄就行**）：
   ```
-  python skills\arima-forecast\scripts\forecast.py --ts-code 600519.SH --n 10
-  python skills\bollinger\scripts\detect.py --ts-code 600519.SH --start 2024-01-01 --end 2024-12-31
+  python skills/arima-forecast/scripts/forecast.py --ts-code 600519.SH --n 10
+  python skills/bollinger/scripts/detect.py --ts-code 600519.SH --start 2024-01-01 --end 2024-12-31
   ```
 
 如果 `exec` 回复里看到 `Exit code:` 非 0 或 `STDERR`：

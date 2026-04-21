@@ -9,18 +9,18 @@ metadata: {"nanobot":{"emoji":"📈","requires":{"bins":["python"]}}}
 当用户问"**未来 n 个交易日收盘价**"、"**股价预测**"、"**趋势外推**"等问题时使用本 skill。
 实际拟合与绘图由独立 Python 脚本完成，一次调用 = 一个子进程，**脚本崩溃不会影响主程序**。
 
-## 运行（严格按此格式，否则会踩 Windows shell 引号陷阱）
+## 运行（严格按此格式，否则会踩 shell 引号陷阱）
 
 用 `exec` 工具执行：
 
 ```
-python skills\arima-forecast\scripts\forecast.py --ts-code 600519.SH --n 10
+python skills/arima-forecast/scripts/forecast.py --ts-code 600519.SH --n 10
 ```
 
 **三条硬规定**（违反必挂）：
 
 1. **不传 `working_dir`** —— `exec` 默认 cwd 就是 `nanobot/`，相对路径可直达
-2. **用相对路径** `skills\arima-forecast\scripts\forecast.py`，**不要**写绝对路径
+2. **用正斜杠相对路径** `skills/arima-forecast/scripts/forecast.py`（Windows / Linux / Docker 通吃），**不要**写绝对路径，也**不要**用反斜杠
 3. **整个 command 里不加任何引号**（路径不含空格，加引号反而触发 `\"` 解析错乱）
 
 参数：
@@ -39,7 +39,7 @@ python skills\arima-forecast\scripts\forecast.py --ts-code 600519.SH --n 10
 | 症状                                                   | 处方                                                                 |
 | ------------------------------------------------------ | -------------------------------------------------------------------- |
 | `can't open file '...scripts\"...\"'` / `Errno 22`      | 触犯了引号规则。去掉 `working_dir` 参数 + 去掉所有引号，重试一次      |
-| `No such file or directory ... forecast.py`             | 路径写错，按模板 `skills\arima-forecast\scripts\forecast.py` 再试     |
+| `No such file or directory ... forecast.py`             | 路径写错，按模板 `skills/arima-forecast/scripts/forecast.py` 再试     |
 | `错误：数据库文件未找到`                                | 数据缺失，**不要重试**，如实告诉用户                                  |
 | `错误：近一年数据仅 N 条，不足 80 条`                    | 样本不够，换成交投活跃的大盘股（如 `600519.SH`）再试                 |
 | `错误：预测天数超出范围`                                | `--n` 必须 1~60，修正后重试                                           |

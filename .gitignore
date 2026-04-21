@@ -1,8 +1,10 @@
+logs/
 sessions/
 memory/
 __pycache__/
 .files/
 charts/
+images_show/
 *.gz
 
 # 本地数据库 / 离线镜像产物（仓库不携带二进制）

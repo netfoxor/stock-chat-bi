@@ -22,7 +22,7 @@
 
 环境变量：
   DASHSCOPE_API_KEY  必填
-  QWEN_AGENT_MODEL   可选，默认读 config.json 的 qwen-plus
+  QWEN_AGENT_MODEL   可选，默认读 config.json 的 qwen3.6-plus
 """
 
 from __future__ import annotations

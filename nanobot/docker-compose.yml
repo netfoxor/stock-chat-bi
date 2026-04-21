@@ -1,0 +1,14 @@
+services:
+  nanobot:
+    image: nanobot-app:latest
+    container_name: nanobot
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${HOST_PORT:-10001}:10001"
+    env_file:
+      - .env
+    environment:
+      TZ: Asia/Shanghai

@@ -46,8 +46,8 @@ class HealPattern:
 _FIX_EXAMPLE = (
     "✅ 正确调用示例（本工作区根目录就是 `nanobot/`，脚本用相对路径、无引号、不设 working_dir）：\n"
     "```\n"
-    "python skills\\arima-forecast\\scripts\\forecast.py --ts-code 600519.SH --n 10\n"
-    "python skills\\bollinger\\scripts\\detect.py --ts-code 600519.SH --start 2024-01-01 --end 2024-12-31\n"
+    "python skills/arima-forecast/scripts/forecast.py --ts-code 600519.SH --n 10\n"
+    "python skills/bollinger/scripts/detect.py --ts-code 600519.SH --start 2024-01-01 --end 2024-12-31\n"
     "```\n"
 )
 

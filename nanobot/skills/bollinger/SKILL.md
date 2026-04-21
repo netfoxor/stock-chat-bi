@@ -8,18 +8,18 @@ metadata: {"nanobot":{"emoji":"📊","requires":{"bins":["python"]}}}
 
 当用户问"**布林带**"、"**超买/超卖**"、"**突破上/下轨**"、"**均值回归信号**"等问题时使用。
 
-## 运行（严格按此格式，否则会踩 Windows shell 引号陷阱）
+## 运行（严格按此格式，否则会踩 shell 引号陷阱）
 
 用 `exec` 工具执行：
 
 ```
-python skills\bollinger\scripts\detect.py --ts-code 600519.SH --start 2024-01-01 --end 2024-12-31
+python skills/bollinger/scripts/detect.py --ts-code 600519.SH --start 2024-01-01 --end 2024-12-31
 ```
 
 **三条硬规定**（违反必挂）：
 
 1. **不传 `working_dir`** —— `exec` 默认 cwd 就是 `nanobot/`，相对路径可直达
-2. **用相对路径** `skills\bollinger\scripts\detect.py`，**不要**写绝对路径
+2. **用正斜杠相对路径** `skills/bollinger/scripts/detect.py`（Windows / Linux / Docker 通吃），**不要**写绝对路径，也**不要**用反斜杠
 3. **整个 command 里不加任何引号**（路径不含空格，加引号反而触发 `\"` 解析错乱）
 
 参数：
@@ -55,7 +55,7 @@ python skills\bollinger\scripts\detect.py --ts-code 600519.SH --start 2024-01-01
 | 症状                                                   | 处方                                                             |
 | ------------------------------------------------------ | ---------------------------------------------------------------- |
 | `can't open file '...scripts\"...\"'` / `Errno 22`      | 触犯了引号规则。去掉 `working_dir` + 去掉所有引号，重试一次       |
-| `No such file or directory ... detect.py`               | 路径写错，按模板 `skills\bollinger\scripts\detect.py` 再试        |
+| `No such file or directory ... detect.py`               | 路径写错，按模板 `skills/bollinger/scripts/detect.py` 再试        |
 | `错误：数据库文件未找到`                                | 数据缺失，**不要重试**，如实告诉用户                              |
 | `错误：未找到 XXX 在 [...] 的日线数据`                   | 该股在该区间无行情，换区间或换代码再试                           |
 | `错误：仅有 N 条日线，不足 25 条`                        | 区间太短，放宽 `--start` 到更早一点再试                          |
