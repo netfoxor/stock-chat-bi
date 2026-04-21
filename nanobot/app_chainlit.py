@@ -23,9 +23,14 @@ from pathlib import Path
 
 import chainlit as cl
 
+from chainlit_data import build_data_layer
 from nanobot.agent.hook import AgentHook, AgentHookContext
 from self_heal_hook import SelfHealHook
 from stock_bot import WORKSPACE, build_bot
+
+# 默认登录凭据。**仅供本地 / 内网使用**，正式部署务必通过环境变量覆盖。
+_DEFAULT_USERNAME = "admin"
+_DEFAULT_PASSWORD = "admin"
 
 # 匹配工具产出的两种图表引用：
 #   * ECharts 自定义元素：![alt](chart:charts/xxx.json)
@@ -132,6 +137,16 @@ TOOLS_WITH_VISUAL_OUTPUT = {"exc_sql", "exec"}
 # 拼 side 附件时的原始输出长度上限，防止把 SKILL.md 全文塞进来
 _MAX_TRACE_CHARS = 6000
 
+# nanobot 的 read_file 会给每行加 "行号| " 前缀（给 LLM 引用用），
+# 但对人来说它把 Markdown 文件也"去结构化"了，在 ToolTrace 里看不到标题/表格/代码块。
+# 这个正则匹配开头可选空格 + 数字 + `|` + 可选一个空格，用来剥掉前缀。
+_READ_FILE_LINE_PREFIX_RE = re.compile(r"^[ \t]*\d+\|[ \t]?", re.MULTILINE)
+
+
+def _strip_read_file_line_numbers(s: str) -> str:
+    """把 read_file 输出里 `N| ` 的行号前缀剥掉，让下游能当 Markdown 渲染。"""
+    return _READ_FILE_LINE_PREFIX_RE.sub("", s)
+
 
 def _build_trace_element(name: str, args_str: str, result_str: str) -> "cl.CustomElement":
     """
@@ -144,6 +159,10 @@ def _build_trace_element(name: str, args_str: str, result_str: str) -> "cl.Custo
     这些内容已经在主流通过 CustomElement / cl.Image 渲染过，trace 里
     再留 `![...](chart:...)` 只会被浏览器当成失败的 <img> 显示出破图占位符。
     """
+    # read_file 的 "行号| " 前缀会把 Markdown 变成纯文本，先剥掉再交给 marked
+    if name == "read_file":
+        result_str = _strip_read_file_line_numbers(result_str)
+
     # 清掉图表/图片引用，避免在 trace 里渲染出破图
     cleaned = CHART_MD_RE.sub("", result_str)
     cleaned = IMAGE_MD_RE.sub("", cleaned)
@@ -228,6 +247,56 @@ class ChainlitHook(AgentHook):
 # Chainlit 生命周期
 # --------------------------------------------------------------------------- #
 
+@cl.data_layer
+def _chainlit_data_layer():
+    """
+    注册自定义 Data Layer（SQLite + aiosqlite）。
+
+    启用后 Chainlit 的侧栏会自动出现历史列表：
+      * 新建对话：左上角 "New Chat"
+      * 切换历史：点击侧栏任一历史条目
+      * 删除历史：历史条目右侧三点菜单 → Delete
+      * 搜索历史：侧栏顶部的搜索框
+    历史持久化到 `memory/chainlit.db`（可用 CHAINLIT_DB_PATH 环境变量覆盖）。
+    """
+    return build_data_layer()
+
+
+@cl.password_auth_callback
+def _auth_callback(username: str, password: str) -> cl.User | None:
+    """
+    最简单的单用户密码认证。默认 admin/admin，可通过环境变量覆盖：
+      CHAINLIT_USERNAME / CHAINLIT_PASSWORD
+
+    Chainlit 要求启用 Data Layer 时必须配合某种认证机制（用来把历史归属到
+    具体用户）。这里只给本地 / 内网使用，别把默认口令暴露到公网。
+    """
+    expected_user = os.environ.get("CHAINLIT_USERNAME", _DEFAULT_USERNAME)
+    expected_pass = os.environ.get("CHAINLIT_PASSWORD", _DEFAULT_PASSWORD)
+    if username == expected_user and password == expected_pass:
+        return cl.User(identifier=username, metadata={"role": "admin"})
+    return None
+
+
+def _session_key_for_thread(thread_id: str | None) -> str:
+    """
+    把 nanobot 的会话键绑定到 Chainlit thread_id，这样：
+      * 每条侧栏历史都有独立的对话上下文（LLM 不会串台）
+      * 同一条历史多次打开时 nanobot 能找回之前的记忆
+    thread_id 理论上永远存在；兜底用时间戳只是防御性写法。
+    """
+    if thread_id:
+        return f"stock:chainlit:{thread_id}"
+    return f"stock:chainlit:{int(time.time())}"
+
+
+def _ensure_bot_in_session(thread_id: str | None) -> None:
+    """懒初始化 bot + session_key，start / resume 都会调。"""
+    if cl.user_session.get("bot") is None:
+        cl.user_session.set("bot", build_bot())
+    cl.user_session.set("session_key", _session_key_for_thread(thread_id))
+
+
 @cl.on_chat_start
 async def on_chat_start() -> None:
     if not os.environ.get("DASHSCOPE_API_KEY"):
@@ -236,13 +305,12 @@ async def on_chat_start() -> None:
         ).send()
         return
 
-    bot = build_bot()
-    cl.user_session.set("bot", bot)
-    cl.user_session.set("session_key", f"stock:chainlit:{int(time.time())}")
+    thread_id = getattr(cl.context.session, "thread_id", None)
+    _ensure_bot_in_session(thread_id)
 
     await cl.Message(
         content=(
-            "**股票查询助手已就绪（nanobot）** 🐈\n\n"
+            "**股票查询助手已就绪** 🐈\n\n"
             "可以尝试：\n"
             "- 查询贵州茅台 2025 年全年日线\n"
             "- 统计2025年4月广发证券的日均成交量\n"
@@ -251,6 +319,15 @@ async def on_chat_start() -> None:
             "- 检测广发证券 2025-01-01 到 2025-12-31 的超买超卖"
         )
     ).send()
+
+
+@cl.on_chat_resume
+async def on_chat_resume(thread: cl.types.ThreadDict) -> None:
+    """
+    用户点击侧栏历史 → Chainlit 自动重放历史消息（UI 层）并触发这个回调。
+    我们只需要把 bot 和 session_key 重建好，让后续的新消息能沿用原会话上下文。
+    """
+    _ensure_bot_in_session(thread.get("id"))
 
 
 @cl.on_message

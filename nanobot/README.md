@@ -17,17 +17,36 @@
 # 2. 装依赖（第一次运行需要）
 pip install -r requirements.txt
 
-# 3. 配 API Key（Windows PowerShell）
-$env:DASHSCOPE_API_KEY = "sk-xxxxxxxxxxxxxxxxxxxxxxxx"
+# 3. 生成 Chainlit 登录 Cookie 签名密钥（首次部署只需一次）
+chainlit create-secret
+#    把输出的那串 CHAINLIT_AUTH_SECRET="..." 复制进 .env
 
-# 4. 启动 Chainlit 前端（热重载）
+# 4. 配环境变量（.env 方式更方便：复制 .env.example 改里面的值）
+$env:DASHSCOPE_API_KEY = "sk-xxxxxxxxxxxxxxxxxxxxxxxx"
+$env:CHAINLIT_AUTH_SECRET = "上一步生成的那串"
+
+# 5. 启动 Chainlit 前端（热重载）
 chainlit run app_chainlit.py -w
 ```
 
-默认监听 **http://localhost:8000**。
+默认监听 **http://localhost:8000**。**登录账号默认 `admin` / `admin`**，
+可用 `CHAINLIT_USERNAME` / `CHAINLIT_PASSWORD` 覆盖。
 
-> Linux / macOS 把第 3 步改成 `export DASHSCOPE_API_KEY=sk-...` 即可。
-> 也可以在 `nanobot/` 下放一份 `.env`（复制 `.env.example`），Chainlit 会自动加载。
+> Linux / macOS 把 `$env:X = "..."` 改成 `export X=...` 即可。
+> 推荐直接用 `.env`（复制 `.env.example`），Chainlit 会自动加载，不用每次 export。
+
+### 💬 聊天历史
+
+侧栏自带历史管理，无需额外配置：
+
+| 功能 | 操作位置 |
+|---|---|
+| 新建对话 | 侧栏左上角 **New Chat** |
+| 切换历史 | 点击侧栏任一历史条目（自动恢复对话上下文） |
+| 删除单条历史 | 历史条目右侧的 **⋮** 菜单 → Delete |
+| 全文搜索历史 | 侧栏顶部的搜索框 |
+
+历史数据持久化在 `memory/chainlit.db`（SQLite），可用 `CHAINLIT_DB_PATH` 环境变量覆盖路径。删除就是物理删除（连同消息、工具调用 trace、图表元素一起清掉）。
 
 ### 其他启动方式
 
@@ -48,7 +67,8 @@ python stock_bot.py
 
 ```
 nanobot/
-├── app_chainlit.py          # Chainlit 前端入口（工具 trace 折叠 / 图表 emit）
+├── app_chainlit.py          # Chainlit 前端入口（工具 trace 折叠 / 图表 emit / 历史）
+├── chainlit_data.py         # Chainlit 聊天历史持久化（SQLite + SQLAlchemyDataLayer）
 ├── stock_bot.py             # nanobot AgentLoop 组装 + CLI 入口
 ├── stock_core.py            # 底层：DB 路径 / 画图 / SQL 执行工具函数
 ├── self_heal_hook.py        # 工具失败时的自动重试 / 修复钩子
@@ -63,7 +83,7 @@ nanobot/
 │   └── ToolTrace.jsx        # 工具调用 trace 折叠块
 ├── charts/                  # 运行时生成的 echarts option JSON
 ├── data/                    # SQLite 库（stock_prices_history.db）
-├── memory/                  # 会话记忆持久化
+├── memory/                  # 会话记忆 + 聊天历史（chainlit.db）
 ├── sessions/                # Chainlit 会话数据
 ├── config.json              # 模型 / 上下文窗口 / 工具配置
 ├── requirements.txt
@@ -83,6 +103,10 @@ nanobot/
 | 变量 | 必填 | 说明 |
 |---|---|---|
 | `DASHSCOPE_API_KEY` | ✅ | 阿里云 DashScope（通义千问）API Key |
+| `CHAINLIT_AUTH_SECRET` | ✅ | Chainlit 登录 Cookie / JWT 签名密钥，运行 `chainlit create-secret` 生成 |
+| `CHAINLIT_USERNAME` | | 登录用户名，默认 `admin` |
+| `CHAINLIT_PASSWORD` | | 登录密码，默认 `admin`（**对外暴露务必改掉**） |
+| `CHAINLIT_DB_PATH` | | 聊天历史 SQLite 路径，默认 `nanobot/memory/chainlit.db` |
 | `QWEN_AGENT_MODEL` | | 覆盖 `config.json` 里的模型名，默认 `qwen3.6-plus` |
 | `STOCK_DB_PATH` | | 覆盖 SQLite 库路径，默认 `nanobot/data/stock_prices_history.db` |
 | `HOST_PORT` | | 仅 docker-compose 用，映射到宿主机的端口（默认 `10001`） |
