@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 from typing import Any
 
@@ -35,7 +36,8 @@ class ExcSQLTool(Tool):
         return (
             "在 MySQL 的 stock_daily 表上执行只读 SQL 查询（仅 SELECT / WITH SELECT）；"
             "自动生成 markdown 表格、数值描述与交互式 ECharts 图表（K 线 / 折线 / 量价副图自动识别）。"
-            "图表以 ![label](chart:charts/xxx.json) markdown 占位返回，由前端渲染。"
+            "当结果适合可视化时，额外输出 ```echarts 代码块（标准 ECharts option JSON）。"
+            "同时输出 ```datatable 代码块（Ant Design Table 结构）。"
         )
 
     @property
@@ -76,16 +78,18 @@ class ExcSQLTool(Tool):
             return _empty_result_diagnosis(sql_input)
 
         md = core.build_result_markdown(df)
+        datatable_block = _build_datatable_block(df, max_rows=200)
         if df.shape[1] < 2:
-            return md
+            return f"{md}\n\n{datatable_block}"
 
         try:
             option, label = await asyncio.to_thread(core.build_stock_echart, df)
         except Exception as e:
-            return f"{md}\n\n*（绘图失败：{e}）*"
+            return f"{md}\n\n{datatable_block}\n\n*（绘图失败：{e}）*"
 
-        chart_md = core.save_echart_option(option, prefix="sql", label=label)
-        return f"{md}\n\n{chart_md}"
+        echarts_block = _build_echarts_block(option)
+        # 输出顺序：说明/预览 → echarts → datatable
+        return f"{md}\n\n{echarts_block}\n\n{datatable_block}"
 
 
 def _check_sql_pitfalls(sql: str) -> str | None:
@@ -113,6 +117,29 @@ def _check_sql_pitfalls(sql: str) -> str | None:
             "- 近 90 天：`trade_date >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)`\n"
         )
     return None
+
+
+def _build_echarts_block(option: dict) -> str:
+    return "```echarts\n" + json.dumps(option, ensure_ascii=False) + "\n```"
+
+
+def _build_datatable_block(df, *, max_rows: int = 200) -> str:
+    """
+    输出约定的 datatable JSON：
+      {"columns":[{"title":"","dataIndex":""}], "data":[{...}]}
+    为避免消息过大，最多输出 max_rows 行（默认 200）。
+    """
+    cols = [{"title": str(c), "dataIndex": str(c)} for c in df.columns.tolist()]
+    data = df.to_dict(orient="records")
+    truncated = False
+    if len(data) > max_rows:
+        data = data[:max_rows]
+        truncated = True
+    payload = {"columns": cols, "data": data}
+    block = "```datatable\n" + json.dumps(payload, ensure_ascii=False) + "\n```"
+    if truncated:
+        block = f"*（表格仅展示前 {max_rows} 行，已截断）*\n\n{block}"
+    return block
 
 
 def _empty_result_diagnosis(sql: str) -> str:

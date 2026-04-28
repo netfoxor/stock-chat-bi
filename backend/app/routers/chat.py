@@ -22,6 +22,10 @@ from app.services.nanobot_service import ask
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 _FENCE_RE = re.compile(r"```(?P<lang>echarts|datatable)\n(?P<body>[\s\S]*?)\n```", re.IGNORECASE)
+_MD_TABLE_RE = re.compile(
+    r"(?P<table>(?:^\|.*\|\s*$\n){2,}(?:^\|.*\|\s*$\n?)*)",
+    re.MULTILINE,
+)
 
 
 def _parse_assistant_content(text: str) -> tuple[str, str, dict[str, Any] | None]:
@@ -33,7 +37,14 @@ def _parse_assistant_content(text: str) -> tuple[str, str, dict[str, Any] | None
     """
     m = _FENCE_RE.search(text)
     if not m:
-        return text, "text", None
+        # 兜底：nanobot 可能输出纯 Markdown 表格/描述（没有 ```datatable/```echarts）
+        patched = _augment_markdown_with_blocks(text)
+        m2 = _FENCE_RE.search(patched)
+        if not m2:
+            return patched, "text", None
+        # 用增强后的内容继续解析
+        text = patched
+        m = m2
 
     lang = m.group("lang").lower()
     body = m.group("body").strip()
@@ -46,6 +57,113 @@ def _parse_assistant_content(text: str) -> tuple[str, str, dict[str, Any] | None
     if lang == "echarts":
         return text, "chart", data
     return text, "table", data
+
+
+def _augment_markdown_with_blocks(text: str) -> str:
+    """
+    若未包含 ```echarts/```datatable，则尝试从 Markdown pipe table 推断 datatable，
+    并在可行时从表格推断一个简单的 ECharts option（折线或 K 线）。
+    """
+    if _FENCE_RE.search(text):
+        return text
+
+    m = _MD_TABLE_RE.search(text + "\n")
+    if not m:
+        return text
+
+    table_md = m.group("table").strip()
+    dt = _md_table_to_datatable(table_md)
+    if not dt:
+        return text
+
+    blocks: list[str] = []
+    echarts = _datatable_to_echarts(dt)
+    if echarts:
+        blocks.append("```echarts\n" + json.dumps(echarts, ensure_ascii=False) + "\n```")
+    blocks.append("```datatable\n" + json.dumps(dt, ensure_ascii=False) + "\n```")
+
+    return text.rstrip() + "\n\n" + "\n\n".join(blocks) + "\n"
+
+
+def _md_table_to_datatable(table_md: str) -> dict[str, Any] | None:
+    lines = [ln.strip() for ln in table_md.splitlines() if ln.strip()]
+    if len(lines) < 2:
+        return None
+    header = [c.strip() for c in lines[0].strip("|").split("|")]
+    # 第二行是分隔符：| --- | --- |
+    sep = lines[1]
+    if "-" not in sep:
+        return None
+
+    columns = [{"title": h, "dataIndex": h} for h in header]
+    data: list[dict[str, Any]] = []
+    for ln in lines[2:]:
+        if not ln.startswith("|") or not ln.endswith("|"):
+            continue
+        cells = [c.strip() for c in ln.strip("|").split("|")]
+        if len(cells) != len(header):
+            continue
+        row: dict[str, Any] = {}
+        for h, v in zip(header, cells, strict=False):
+            row[h] = _coerce_cell(v)
+        data.append(row)
+    return {"columns": columns, "data": data}
+
+
+def _coerce_cell(v: str) -> Any:
+    s = v.replace(",", "").strip()
+    if s in ("", "-", "—"):
+        return None
+    try:
+        if "." in s:
+            return float(s)
+        return int(s)
+    except Exception:
+        return v.strip()
+
+
+def _datatable_to_echarts(dt: dict[str, Any]) -> dict[str, Any] | None:
+    cols = [c.get("dataIndex") for c in dt.get("columns", []) if isinstance(c, dict)]
+    rows = dt.get("data", [])
+    if not isinstance(rows, list) or not rows:
+        return None
+
+    # 识别日期列
+    date_key = None
+    for cand in ("日期", "trade_date", "date"):
+        if cand in cols:
+            date_key = cand
+            break
+    if not date_key:
+        return None
+
+    # candlestick: open/high/low/close
+    open_k = next((c for c in cols if c in ("open", "开盘价")), None)
+    high_k = next((c for c in cols if c in ("high", "最高价")), None)
+    low_k = next((c for c in cols if c in ("low", "最低价")), None)
+    close_k = next((c for c in cols if c in ("close", "收盘价")), None)
+
+    x = [r.get(date_key) for r in rows]
+    if open_k and high_k and low_k and close_k:
+        series_data = [[r.get(open_k), r.get(close_k), r.get(low_k), r.get(high_k)] for r in rows]
+        return {
+            "tooltip": {"trigger": "axis"},
+            "xAxis": {"type": "category", "data": x},
+            "yAxis": {"type": "value", "scale": True},
+            "series": [{"type": "candlestick", "name": "K线", "data": series_data}],
+        }
+
+    # line: close
+    if close_k:
+        y = [r.get(close_k) for r in rows]
+        return {
+            "tooltip": {"trigger": "axis"},
+            "xAxis": {"type": "category", "data": x},
+            "yAxis": {"type": "value", "scale": True},
+            "series": [{"type": "line", "name": "收盘价", "data": y, "smooth": True}],
+        }
+
+    return None
 
 
 def _sse(data: str, event: str | None = None) -> str:

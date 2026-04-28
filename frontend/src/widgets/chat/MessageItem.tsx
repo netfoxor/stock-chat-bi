@@ -1,28 +1,41 @@
 import { Button, Card, Space, Typography, message as antdMessage } from "antd";
 import { useMemo } from "react";
 import { useDashboardStore } from "../../store/dashboardStore";
-import { extractSpecialBlock, InlineDataTable, InlineECharts, MarkdownView } from "./renderers";
+import { extractSpecialBlocks, InlineDataTable, InlineECharts, MarkdownView } from "./renderers";
 
 export function MessageItem(props: { message: any }) {
   const m = props.message;
   const addWidget = useDashboardStore((s) => s.addWidget);
 
-  const special = useMemo(() => extractSpecialBlock(m.content ?? ""), [m.content]);
+  const { cleanMarkdown, blocks } = useMemo(() => extractSpecialBlocks(m.content ?? ""), [m.content]);
+  const echarts = blocks.find((b) => b.kind === "echarts");
+  const datatable = blocks.find((b) => b.kind === "datatable");
 
   const onCopy = async () => {
     await navigator.clipboard.writeText(m.content ?? "");
     antdMessage.success("已复制");
   };
 
-  const onAdd = async () => {
-    if (!special) return;
+  const onAddChart = async () => {
+    if (!echarts) return;
     const layout = { i: "new", x: 0, y: Infinity, w: 6, h: 8 };
     await addWidget({
-      type: special.kind === "echarts" ? "chart" : "table",
-      data: special.data,
+      type: "chart",
+      data: echarts.data,
       layout,
     });
-    antdMessage.success("已添加到大屏");
+    antdMessage.success("图表已添加到大屏");
+  };
+
+  const onAddTable = async () => {
+    if (!datatable) return;
+    const layout = { i: "new", x: 0, y: Infinity, w: 6, h: 8 };
+    await addWidget({
+      type: "table",
+      data: datatable.data,
+      layout,
+    });
+    antdMessage.success("表格已添加到大屏");
   };
 
   return (
@@ -33,26 +46,31 @@ export function MessageItem(props: { message: any }) {
           <Button size="small" onClick={() => void onCopy()}>
             复制
           </Button>
-          {special && (
-            <Button size="small" type="primary" onClick={() => void onAdd()}>
-              添加到大屏
+          {echarts && (
+            <Button size="small" type="primary" onClick={() => void onAddChart()}>
+              添加图表到大屏
+            </Button>
+          )}
+          {datatable && (
+            <Button size="small" onClick={() => void onAddTable()}>
+              添加表格到大屏
             </Button>
           )}
         </Space>
       </Space>
 
       <div style={{ marginTop: 8 }}>
-        <MarkdownView content={m.content ?? ""} />
+        <MarkdownView content={cleanMarkdown || m.content || ""} />
       </div>
 
-      {special?.kind === "echarts" && (
+      {echarts && (
         <div style={{ marginTop: 12 }}>
-          <InlineECharts option={special.data} />
+          <InlineECharts option={echarts.data} />
         </div>
       )}
-      {special?.kind === "datatable" && (
+      {datatable && (
         <div style={{ marginTop: 12 }}>
-          <InlineDataTable value={special.data} />
+          <InlineDataTable value={datatable.data} />
         </div>
       )}
     </Card>

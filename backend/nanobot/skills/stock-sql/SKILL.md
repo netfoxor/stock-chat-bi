@@ -7,7 +7,7 @@ metadata: {"nanobot":{"emoji":"🗃️","requires":{"bins":["python"]}}}
 # 股票 SQL 业务知识 Skill
 
 当用户问股票的**历史行情、涨跌幅、区间走势、排行榜、K 线、量价**等问题，**先读本 skill**，再用 `exc_sql` 工具执行查询。
-查询路径：读本 skill → 组装 SQL → 调 `exc_sql(sql_input=...)` → 把返回的 markdown + 图表占位**原样转发**给用户。
+查询路径：读本 skill → 组装 SQL → 调 `exc_sql(sql_input=...)` → 把返回的 markdown + ```echarts/```datatable 代码块**原样转发**给用户。
 
 ## 数据库
 
@@ -147,7 +147,8 @@ FROM base;
 1. 概况文字
 2. 数据预览 markdown 表
 3. 数值/文本描述统计
-4. 图表占位 `![...](chart:charts/xxx.json)`（前端自动渲染 ECharts）
+4. ` ```echarts ` 代码块：标准 ECharts option JSON（前端内联渲染，并可“添加到大屏”）
+5. ` ```datatable ` 代码块：`{"columns":[...],"data":[...]}`（前端内联渲染，并可“添加到大屏”）
 
 **必须原样把这整段转发给用户**，不得裁剪、重写或转成纯文字摘要。最后再用 1-3 句话点评。
 

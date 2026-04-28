@@ -5,18 +5,24 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 
-const FENCE_RE = /```(echarts|datatable)\n([\s\S]*?)\n```/i;
+const FENCE_RE_G = /```(echarts|datatable)\n([\s\S]*?)\n```/gi;
 
-export function extractSpecialBlock(markdown: string): { kind: "echarts" | "datatable"; data: any } | null {
-  const m = markdown.match(FENCE_RE);
-  if (!m) return null;
-  const kind = m[1].toLowerCase() as "echarts" | "datatable";
-  try {
-    const data = JSON.parse(m[2].trim());
-    return { kind, data };
-  } catch {
-    return null;
-  }
+export type SpecialBlock = { kind: "echarts" | "datatable"; data: any };
+
+export function extractSpecialBlocks(markdown: string): { cleanMarkdown: string; blocks: SpecialBlock[] } {
+  const blocks: SpecialBlock[] = [];
+  const cleanMarkdown = (markdown ?? "").replace(FENCE_RE_G, (_full, lang, body) => {
+    const kind = String(lang).toLowerCase() as "echarts" | "datatable";
+    try {
+      const data = JSON.parse(String(body).trim());
+      blocks.push({ kind, data });
+    } catch {
+      // ignore invalid JSON blocks, but remove fence to keep UI clean
+    }
+    return "";
+  });
+
+  return { cleanMarkdown: cleanMarkdown.trim(), blocks };
 }
 
 export function MarkdownView(props: { content: string }) {
