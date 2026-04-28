@@ -1,17 +1,21 @@
 import { Button, Card, Input, Space, Typography } from "antd";
 import { useMemo, useState } from "react";
-import GridLayout, { Layout } from "react-grid-layout";
+import GridLayout, { Layout, WidthProvider } from "react-grid-layout";
 import { useDashboardStore } from "../../store/dashboardStore";
 import { InlineDataTable, InlineECharts } from "../chat/renderers";
+import { useElementSize } from "../../hooks/useElementSize";
 
 import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
+
+const AutoWidthGridLayout = WidthProvider(GridLayout);
 
 export function DashboardGrid() {
   const widgets = useDashboardStore((s) => s.widgets);
   const updateWidget = useDashboardStore((s) => s.updateWidget);
   const deleteWidget = useDashboardStore((s) => s.deleteWidget);
   const updateLayoutBatch = useDashboardStore((s) => s.updateLayoutBatch);
+  const { ref: wrapRef } = useElementSize<HTMLDivElement>();
 
   const layout: Layout[] = useMemo(
     () =>
@@ -34,13 +38,12 @@ export function DashboardGrid() {
   };
 
   return (
-    <div style={{ height: "100%", background: "#fafafa", border: "1px solid #f0f0f0" }}>
-      <GridLayout
+    <div ref={wrapRef} style={{ height: "100%", background: "#fafafa", border: "1px solid #f0f0f0" }}>
+      <AutoWidthGridLayout
         className="layout"
         layout={layout}
         cols={12}
         rowHeight={30}
-        width={1200}
         onLayoutChange={onLayoutChange}
         draggableHandle=".widget-drag"
       >
@@ -92,14 +95,29 @@ export function DashboardGrid() {
                   </Button>
                 </Space>
               }
-              bodyStyle={{ height: "100%", overflow: "auto" }}
-              style={{ height: "100%" }}
+              bodyStyle={{ flex: 1, minHeight: 0, padding: 8, display: "flex", flexDirection: "column" }}
+              style={{ height: "100%", display: "flex", flexDirection: "column" }}
             >
-              {w.type === "chart" ? <InlineECharts option={w.data} /> : <InlineDataTable value={w.data} />}
+              <WidgetBody widget={w} />
             </Card>
           </div>
         ))}
-      </GridLayout>
+      </AutoWidthGridLayout>
+    </div>
+  );
+}
+
+function WidgetBody(props: { widget: any }) {
+  const { ref, size } = useElementSize<HTMLDivElement>();
+  const h = Math.max(0, size.height);
+
+  return (
+    <div ref={ref} style={{ flex: 1, minHeight: 0, height: "100%" }}>
+      {props.widget.type === "chart" ? (
+        <InlineECharts option={props.widget.data} height={h || 260} />
+      ) : (
+        <InlineDataTable value={props.widget.data} height={h || 260} showTitle={false} />
+      )}
     </div>
   );
 }

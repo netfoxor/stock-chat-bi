@@ -8,7 +8,7 @@
       "context_window_tokens": 32768,
       "max_tool_result_chars": 32000,
       "temperature": 0,
-      "max_tool_iterations": 20,
+      "max_tool_iterations": 50,
       "timezone": "Asia/Shanghai"
     }
   },

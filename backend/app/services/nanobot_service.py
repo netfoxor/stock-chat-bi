@@ -52,7 +52,10 @@ def _get_bot() -> Any:
 
 async def ask(question: str, session_key: str) -> str:
     bot = _get_bot()
-    result = await bot.run(question, session_key=session_key, hooks=[])
+    # 启用程序级自愈（主要约束 exec / exc_sql 常见失败模式）
+    from self_heal_hook import SelfHealHook  # type: ignore
+
+    result = await bot.run(question, session_key=session_key, hooks=[SelfHealHook()])
     return (result.content or "").strip()
 
 

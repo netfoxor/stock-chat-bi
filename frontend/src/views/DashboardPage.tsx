@@ -1,7 +1,7 @@
 import { Button, Layout, Space, Typography } from "antd";
 import { useEffect } from "react";
 import { useAuthStore } from "../store/authStore";
-import { ChatPanel } from "../widgets/chat/ChatPanel";
+import { ChatWindow } from "../widgets/chat/ChatWindow";
 import { DashboardGrid } from "../widgets/dashboard/DashboardGrid";
 import { useDashboardStore } from "../store/dashboardStore";
 
@@ -35,10 +35,8 @@ export function DashboardPage() {
         <Layout.Content style={{ padding: 12 }}>
           <DashboardGrid />
         </Layout.Content>
-        <Layout.Sider width={420} theme="light" style={{ borderLeft: "1px solid #f0f0f0" }}>
-          <ChatPanel />
-        </Layout.Sider>
       </Layout>
+      <ChatWindow />
     </Layout>
   );
 }

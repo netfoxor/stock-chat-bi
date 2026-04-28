@@ -46,16 +46,6 @@ export function MessageItem(props: { message: any }) {
           <Button size="small" onClick={() => void onCopy()}>
             复制
           </Button>
-          {echarts && (
-            <Button size="small" type="primary" onClick={() => void onAddChart()}>
-              添加图表到大屏
-            </Button>
-          )}
-          {datatable && (
-            <Button size="small" onClick={() => void onAddTable()}>
-              添加表格到大屏
-            </Button>
-          )}
         </Space>
       </Space>
 
@@ -64,12 +54,22 @@ export function MessageItem(props: { message: any }) {
       </div>
 
       {echarts && (
-        <div style={{ marginTop: 12 }}>
+        <div style={{ marginTop: 12, position: "relative" }}>
+          <div style={{ position: "absolute", right: 0, top: 0, zIndex: 1 }}>
+            <Button size="small" type="primary" onClick={() => void onAddChart()}>
+              添加到大屏
+            </Button>
+          </div>
           <InlineECharts option={echarts.data} />
         </div>
       )}
       {datatable && (
-        <div style={{ marginTop: 12 }}>
+        <div style={{ marginTop: 12, position: "relative" }}>
+          <div style={{ position: "absolute", right: 0, top: 0, zIndex: 1 }}>
+            <Button size="small" type="primary" onClick={() => void onAddTable()}>
+              添加到大屏
+            </Button>
+          </div>
           <InlineDataTable value={datatable.data} />
         </div>
       )}

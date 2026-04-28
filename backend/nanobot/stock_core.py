@@ -105,7 +105,11 @@ def _engine():
     # 延迟导入：skill script 冷启动时能省一点时间，且便于按需使用
     from sqlalchemy import create_engine
     if STOCK_DATABASE_URL:
-        return create_engine(STOCK_DATABASE_URL, pool_pre_ping=True, pool_recycle=3600)
+        # 将异步驱动转换为同步驱动（pd.read_sql 仅支持同步 engine）
+        url = STOCK_DATABASE_URL
+        url = url.replace("mysql+aiomysql://", "mysql+pymysql://")
+        url = url.replace("mysql+asyncmy://", "mysql+pymysql://")
+        return create_engine(url, pool_pre_ping=True, pool_recycle=3600)
     # 兼容：未配置 MySQL 时回退到 SQLite（主要用于本地旧数据排查）
     return create_engine(f"sqlite:///{DB_PATH.as_posix()}", connect_args={"check_same_thread": False})
 
