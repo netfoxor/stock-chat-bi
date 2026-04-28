@@ -5,14 +5,20 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 
-const FENCE_RE_G = /```(echarts|datatable)\n([\s\S]*?)\n```/gi;
+const FENCE_RE_G = /```(echarts|datatable|sql)\n([\s\S]*?)\n```/gi;
 
-export type SpecialBlock = { kind: "echarts" | "datatable"; data: any };
+export type SpecialBlock =
+  | { kind: "echarts" | "datatable"; data: any }
+  | { kind: "sql"; data: string };
 
 export function extractSpecialBlocks(markdown: string): { cleanMarkdown: string; blocks: SpecialBlock[] } {
   const blocks: SpecialBlock[] = [];
   const cleanMarkdown = (markdown ?? "").replace(FENCE_RE_G, (_full, lang, body) => {
-    const kind = String(lang).toLowerCase() as "echarts" | "datatable";
+    const kind = String(lang).toLowerCase() as "echarts" | "datatable" | "sql";
+    if (kind === "sql") {
+      blocks.push({ kind: "sql", data: String(body ?? "").trim() });
+      return "";
+    }
     try {
       const data = JSON.parse(String(body).trim());
       blocks.push({ kind, data });
@@ -26,7 +32,38 @@ export function extractSpecialBlocks(markdown: string): { cleanMarkdown: string;
 }
 
 export function MarkdownView(props: { content: string }) {
-  return <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>{props.content}</ReactMarkdown>;
+  return (
+    <div style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        rehypePlugins={[rehypeHighlight]}
+        components={{
+          pre: ({ children, ...rest }) => (
+            <pre
+              {...rest}
+              style={{
+                margin: "8px 0",
+                whiteSpace: "pre-wrap",
+                overflowWrap: "anywhere",
+                wordBreak: "break-word",
+                overflowX: "auto",
+                maxWidth: "100%",
+              }}
+            >
+              {children}
+            </pre>
+          ),
+          code: ({ children, ...rest }) => (
+            <code {...rest} style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}>
+              {children}
+            </code>
+          ),
+        }}
+      >
+        {props.content}
+      </ReactMarkdown>
+    </div>
+  );
 }
 
 export function InlineECharts(props: { option: any; height?: number | string }) {

@@ -9,6 +9,10 @@ class ConversationCreateRequest(BaseModel):
     title: str | None = None
 
 
+class ConversationUpdateRequest(BaseModel):
+    title: str
+
+
 class ConversationItem(BaseModel):
     id: int
     title: str

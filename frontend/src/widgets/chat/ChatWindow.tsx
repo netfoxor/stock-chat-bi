@@ -1,4 +1,4 @@
-import { Button, Divider, Layout, List, Space, Typography, Checkbox, message } from "antd";
+import { Button, Divider, Layout, List, Modal, Space, Typography, Checkbox, message } from "antd";
 import { MinusOutlined, RobotOutlined } from "@ant-design/icons";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../api/client";
@@ -17,10 +17,13 @@ export function ChatWindow() {
   const setMessages = useChatStore((s) => s.setMessages);
   const appendMessage = useChatStore((s) => s.appendMessage);
   const upsertStreamingAssistant = useChatStore((s) => s.upsertStreamingAssistant);
+  const upsertStreamingTrace = useChatStore((s) => s.upsertStreamingTrace);
   const clearStreaming = useChatStore((s) => s.clearStreaming);
 
   const [loadingConvs, setLoadingConvs] = useState(false);
   const [autoScroll, setAutoScroll] = useState(true);
+  const [editingConvId, setEditingConvId] = useState<number | null>(null);
+  const [editingTitle, setEditingTitle] = useState("");
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<{ startX: number; startY: number; baseLeft: number; baseTop: number; dragging: boolean } | null>(
     null,
@@ -118,6 +121,9 @@ export function ChatWindow() {
       "/chat/stream",
       { conversation_id: activeConversationId, message: text },
       (evt) => {
+        if (evt.type === "trace") {
+          upsertStreamingTrace(evt.event);
+        }
         if (evt.type === "delta") {
           upsertStreamingAssistant(evt.content);
         }
@@ -241,9 +247,74 @@ export function ChatWindow() {
                       background: c.id === activeConversationId ? "#f5f5f5" : "transparent",
                     }}
                   >
-                    <Typography.Text ellipsis style={{ maxWidth: 140 }}>
-                      {c.title}
-                    </Typography.Text>
+                    <Space style={{ width: "100%", justifyContent: "space-between" }}>
+                      {editingConvId === c.id ? (
+                        <input
+                          value={editingTitle}
+                          onChange={(e) => setEditingTitle(e.target.value)}
+                          autoFocus
+                          style={{
+                            width: 110,
+                            fontSize: 12,
+                            padding: "2px 6px",
+                            border: "1px solid #d9d9d9",
+                            borderRadius: 6,
+                          }}
+                          onBlur={async () => {
+                            const next = (editingTitle || "").trim() || c.title;
+                            setEditingConvId(null);
+                            if (next !== c.title) {
+                              await api.put(`/conversations/${c.id}`, { title: next });
+                              await loadConversations();
+                            }
+                          }}
+                          onKeyDown={async (e) => {
+                            if (e.key === "Enter") {
+                              (e.currentTarget as any).blur();
+                            }
+                            if (e.key === "Escape") {
+                              setEditingConvId(null);
+                              setEditingTitle("");
+                            }
+                          }}
+                        />
+                      ) : (
+                        <Typography.Text
+                          ellipsis
+                          style={{ maxWidth: 110 }}
+                          onDoubleClick={(e) => {
+                            e.stopPropagation();
+                            setEditingConvId(c.id);
+                            setEditingTitle(c.title);
+                          }}
+                        >
+                          {c.title}
+                        </Typography.Text>
+                      )}
+                      <Button
+                        size="small"
+                        danger
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          Modal.confirm({
+                            title: "删除会话？",
+                            content: "删除后该会话的所有消息将一起删除，且无法恢复。",
+                            okText: "删除",
+                            okButtonProps: { danger: true },
+                            cancelText: "取消",
+                            onOk: async () => {
+                              await api.delete(`/conversations/${c.id}`);
+                              await loadConversations();
+                              if (activeConversationId === c.id) {
+                                setActiveConversationId(null);
+                              }
+                            },
+                          });
+                        }}
+                      >
+                        删除
+                      </Button>
+                    </Space>
                   </List.Item>
                 )}
               />

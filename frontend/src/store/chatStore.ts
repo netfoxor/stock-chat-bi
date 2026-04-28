@@ -32,6 +32,7 @@ type ChatState = {
   setMessages: (m: Message[]) => void;
   appendMessage: (m: Message) => void;
   upsertStreamingAssistant: (delta: string) => void;
+  upsertStreamingTrace: (ev: any) => void;
   clearStreaming: () => void;
 };
 
@@ -58,10 +59,41 @@ export const useChatStore = create<ChatState>((set, get) => ({
         role: "assistant",
         content: delta,
         content_type: "text",
+        extra: { trace: [] as any[] },
         created_at: new Date().toISOString(),
       });
     } else {
       last.content = (last.content ?? "") + delta;
+    }
+    set({ messages: msgs });
+  },
+
+  upsertStreamingTrace: (ev) => {
+    const msgs = [...get().messages];
+    const last = msgs[msgs.length - 1];
+    if (!last || last.role !== "assistant" || last.id !== -1) {
+      msgs.push({
+        id: -1,
+        role: "assistant",
+        content: "",
+        content_type: "text",
+        extra: { trace: [ev] },
+        created_at: new Date().toISOString(),
+      });
+    } else {
+      const extra = (last.extra ??= {});
+      const trace = (extra.trace ??= []);
+      const spanId = ev?.meta?.span_id;
+      if (spanId) {
+        const idx = trace.findIndex((x: any) => x?.meta?.span_id === spanId);
+        if (idx >= 0) {
+          trace[idx] = { ...trace[idx], ...ev, meta: { ...(trace[idx]?.meta ?? {}), ...(ev?.meta ?? {}) } };
+        } else {
+          trace.push(ev);
+        }
+      } else {
+        trace.push(ev);
+      }
     }
     set({ messages: msgs });
   },

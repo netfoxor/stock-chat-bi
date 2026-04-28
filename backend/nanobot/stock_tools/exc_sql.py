@@ -6,11 +6,13 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import uuid
 from typing import Any
 
 from nanobot.agent.tools.base import Tool
 
 import stock_core as core
+import trace_ctx
 
 
 # 识别"挨着 trade_date 出现的 yyyymmdd 无分隔符日期字面量"（Tushare 旧格式，本库不吃）
@@ -64,32 +66,104 @@ class ExcSQLTool(Tool):
         if not core.is_read_only_sql(sql_input):
             return "错误：仅允许 SELECT 或 WITH ... SELECT 查询。"
 
+        span_id = uuid.uuid4().hex
+        started_at = trace_ctx._now_iso()  # type: ignore[attr-defined]
+        trace_ctx.add_event(kind="skill", name="stock-sql", input=None, output=None, started_at=started_at, meta={"span_id": span_id})
+        trace_ctx.add_event(
+            kind="tool",
+            name="exc_sql",
+            input={"sql_input": sql_input},
+            output=None,
+            started_at=started_at,
+            meta={"span_id": span_id, "phase": "start"},
+        )
+
         # 预检：LLM 常犯错——把 trade_date 当成 Tushare 的 yyyymmdd 格式
         if issue := _check_sql_pitfalls(sql_input):
+            trace_ctx.add_event(
+                kind="tool",
+                name="exc_sql",
+                input={"sql_input": sql_input},
+                output=issue,
+                started_at=started_at,
+                ended_at=trace_ctx._now_iso(),  # type: ignore[attr-defined]
+                meta={"span_id": span_id, "phase": "end", "status": "error"},
+            )
             return issue
 
         try:
             df = await asyncio.to_thread(core.run_query, sql_input)
         except Exception as e:
-            return f"SQL 执行失败: {e}"
+            out = f"SQL 执行失败: {e}"
+            trace_ctx.add_event(
+                kind="tool",
+                name="exc_sql",
+                input={"sql_input": sql_input},
+                output=out,
+                started_at=started_at,
+                ended_at=trace_ctx._now_iso(),  # type: ignore[attr-defined]
+                meta={"span_id": span_id, "phase": "end", "status": "error"},
+            )
+            return out
 
         if df.empty:
             # 空结果不是"成功"，自动做一次常见原因诊断
-            return _empty_result_diagnosis(sql_input)
+            out = _empty_result_diagnosis(sql_input)
+            trace_ctx.add_event(
+                kind="tool",
+                name="exc_sql",
+                input={"sql_input": sql_input},
+                output=out,
+                started_at=started_at,
+                ended_at=trace_ctx._now_iso(),  # type: ignore[attr-defined]
+                meta={"span_id": span_id, "phase": "end", "status": "ok", "rows": 0},
+            )
+            return out
 
+        sql_block = _build_sql_block(sql_input)
         md = core.build_result_markdown(df)
         datatable_block = _build_datatable_block(df, max_rows=200)
         if df.shape[1] < 2:
-            return f"{md}\n\n{datatable_block}"
+            out = f"{md}\n\n{sql_block}\n\n{datatable_block}"
+            trace_ctx.add_event(
+                kind="tool",
+                name="exc_sql",
+                input={"sql_input": sql_input},
+                output={"rows": int(df.shape[0]), "cols": int(df.shape[1])},
+                started_at=started_at,
+                ended_at=trace_ctx._now_iso(),  # type: ignore[attr-defined]
+                meta={"span_id": span_id, "phase": "end", "status": "ok", "rows": int(df.shape[0]), "cols": int(df.shape[1])},
+            )
+            return out
 
         try:
             option, label = await asyncio.to_thread(core.build_stock_echart, df)
         except Exception as e:
-            return f"{md}\n\n{datatable_block}\n\n*（绘图失败：{e}）*"
+            out = f"{md}\n\n{sql_block}\n\n{datatable_block}\n\n*（绘图失败：{e}）*"
+            trace_ctx.add_event(
+                kind="tool",
+                name="exc_sql",
+                input={"sql_input": sql_input},
+                output={"plot_error": str(e)},
+                started_at=started_at,
+                ended_at=trace_ctx._now_iso(),  # type: ignore[attr-defined]
+                meta={"span_id": span_id, "phase": "end", "status": "error"},
+            )
+            return out
 
         echarts_block = _build_echarts_block(option)
         # 输出顺序：说明/预览 → echarts → datatable
-        return f"{md}\n\n{echarts_block}\n\n{datatable_block}"
+        out = f"{md}\n\n{sql_block}\n\n{echarts_block}\n\n{datatable_block}"
+        trace_ctx.add_event(
+            kind="tool",
+            name="exc_sql",
+            input={"sql_input": sql_input},
+            output={"rows": int(df.shape[0]), "cols": int(df.shape[1]), "has_echarts": True},
+            started_at=started_at,
+            ended_at=trace_ctx._now_iso(),  # type: ignore[attr-defined]
+            meta={"span_id": span_id, "phase": "end", "status": "ok", "rows": int(df.shape[0])},
+        )
+        return out
 
 
 def _check_sql_pitfalls(sql: str) -> str | None:
@@ -121,6 +195,11 @@ def _check_sql_pitfalls(sql: str) -> str | None:
 
 def _build_echarts_block(option: dict) -> str:
     return "```echarts\n" + json.dumps(option, ensure_ascii=False) + "\n```"
+
+
+def _build_sql_block(sql: str) -> str:
+    # 前端会解析 ```sql 代码块，并作为 widget.config.sql 保存用于二次编辑
+    return "```sql\n" + sql.strip() + "\n```"
 
 
 def _build_datatable_block(df, *, max_rows: int = 200) -> str:

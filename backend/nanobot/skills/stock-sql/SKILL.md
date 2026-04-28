@@ -67,6 +67,35 @@ WHERE trade_date >= 20250101                               -- 无引号 + 无连
 WHERE trade_date >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
 ```
 
+### ✅ “今天 / 昨天 / 近一周 / 近一月”等相对时间（用于让数据随时间自动滚动）
+
+当用户说“今天/昨天/近一周/近30天”等，**不要写死具体日期**，必须用 MySQL 的滚动日期函数：
+
+```sql
+-- 今天（注意：A 股交易日不一定每天都有数据，空结果请先确认 trade_date 覆盖范围）
+WHERE trade_date = CURDATE()
+
+-- 昨天
+WHERE trade_date = DATE_SUB(CURDATE(), INTERVAL 1 DAY)
+
+-- 近 7 天 / 近 30 天
+WHERE trade_date >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+WHERE trade_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+
+-- 近 1 周（自然周：本周周一到今天）
+WHERE trade_date >= DATE_SUB(CURDATE(), INTERVAL (WEEKDAY(CURDATE())) DAY)
+```
+
+如果需要按天分组（例如统计近 7 天每天的成交额），要用 `DATE(trade_date)`（虽然它本身是 DATE，但保持表达清晰）：
+
+```sql
+SELECT DATE(trade_date) AS d, SUM(amount) AS amt
+FROM stock_daily
+WHERE trade_date >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+GROUP BY d
+ORDER BY d ASC;
+```
+
 ❌ SQLite 写法（MySQL 不支持，会导致工具执行失败，LLM 会开始“自救”反复调用工具直到触发 20 次上限）：
 
 ```sql

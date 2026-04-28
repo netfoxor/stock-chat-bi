@@ -5,6 +5,7 @@ import { useAuthStore } from "../store/authStore";
 type SSEEvent =
   | { type: "status"; message: string }
   | { type: "delta"; content: string }
+  | { type: "trace"; event: any }
   | { type: "done" };
 
 export function useSSE() {

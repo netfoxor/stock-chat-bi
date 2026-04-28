@@ -50,13 +50,17 @@ def _get_bot() -> Any:
     return build_bot()
 
 
-async def ask(question: str, session_key: str) -> str:
+async def ask(question: str, session_key: str, *, trace_sink: Any | None = None):
     bot = _get_bot()
     # 启用程序级自愈（主要约束 exec / exc_sql 常见失败模式）
     from self_heal_hook import SelfHealHook  # type: ignore
+    import trace_ctx  # type: ignore
 
+    trace_ctx.start_trace(sink=trace_sink)
     result = await bot.run(question, session_key=session_key, hooks=[SelfHealHook()])
-    return (result.content or "").strip()
+    content = (result.content or "").strip()
+    trace = trace_ctx.get_trace()
+    return content, trace
 
 
 async def ask_sync_bridge(question: str, session_key: str) -> str:

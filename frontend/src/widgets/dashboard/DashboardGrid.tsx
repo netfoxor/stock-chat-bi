@@ -273,9 +273,9 @@ function WidgetBody(props: { widget: any }) {
   return (
     <div ref={ref} style={{ flex: 1, minHeight: 0, height: "100%" }}>
       {props.widget.type === "chart" ? (
-        <InlineECharts option={props.widget.data} height={h || 260} />
+        <InlineECharts option={props.widget?.config?.echarts ?? props.widget.data} height={h || 260} />
       ) : (
-        <InlineDataTable value={props.widget.data} height={h || 260} showTitle={false} />
+        <InlineDataTable value={props.widget?.config?.table ?? props.widget.data} height={h || 260} showTitle={false} />
       )}
     </div>
   );

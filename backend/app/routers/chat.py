@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from collections.abc import AsyncGenerator
@@ -67,22 +68,29 @@ def _augment_markdown_with_blocks(text: str) -> str:
     if _FENCE_RE.search(text):
         return text
 
+    # 1) Markdown pipe table
     m = _MD_TABLE_RE.search(text + "\n")
-    if not m:
-        return text
+    if m:
+        table_md = m.group("table").strip()
+        dt = _md_table_to_datatable(table_md)
+        if dt:
+            blocks: list[str] = []
+            echarts = _datatable_to_echarts(dt)
+            if echarts:
+                blocks.append("```echarts\n" + json.dumps(echarts, ensure_ascii=False) + "\n```")
+            blocks.append("```datatable\n" + json.dumps(dt, ensure_ascii=False) + "\n```")
+            return text.rstrip() + "\n\n" + "\n\n".join(blocks) + "\n"
 
-    table_md = m.group("table").strip()
-    dt = _md_table_to_datatable(table_md)
-    if not dt:
-        return text
+    # 2) 尝试从文本中提取 JSON（常见：LLM 直接吐 list[dict] / dict 序列）
+    if dt := _try_extract_json_datatable(text):
+        blocks: list[str] = []
+        echarts = _datatable_to_echarts(dt)
+        if echarts:
+            blocks.append("```echarts\n" + json.dumps(echarts, ensure_ascii=False) + "\n```")
+        blocks.append("```datatable\n" + json.dumps(dt, ensure_ascii=False) + "\n```")
+        return text.rstrip() + "\n\n" + "\n\n".join(blocks) + "\n"
 
-    blocks: list[str] = []
-    echarts = _datatable_to_echarts(dt)
-    if echarts:
-        blocks.append("```echarts\n" + json.dumps(echarts, ensure_ascii=False) + "\n```")
-    blocks.append("```datatable\n" + json.dumps(dt, ensure_ascii=False) + "\n```")
-
-    return text.rstrip() + "\n\n" + "\n\n".join(blocks) + "\n"
+    return text
 
 
 def _md_table_to_datatable(table_md: str) -> dict[str, Any] | None:
@@ -166,6 +174,50 @@ def _datatable_to_echarts(dt: dict[str, Any]) -> dict[str, Any] | None:
     return None
 
 
+def _try_extract_json_datatable(text: str) -> dict[str, Any] | None:
+    """
+    兜底：识别文本里的 JSON 数组（或多个对象拼接），转成 datatable 结构。
+    用于修复“AI 回了大段 JSON 文本但没包 ```datatable” 的情况。
+    """
+    s = text.strip()
+    if not s:
+        return None
+
+    candidates: list[str] = []
+    # JSON array
+    m = re.search(r"\[\s*\{[\s\S]*?\}\s*\]", s)
+    if m:
+        candidates.append(m.group(0))
+    # concatenated objects: {...},{...},{...}
+    m2 = re.search(r"(\{[\s\S]*?\})(\s*,\s*\{[\s\S]*?\}){1,}", s)
+    if m2:
+        candidates.append("[" + m2.group(0) + "]")
+
+    for cand in candidates:
+        try:
+            obj = json.loads(cand)
+        except Exception:
+            continue
+        if isinstance(obj, dict):
+            rows = [obj]
+        elif isinstance(obj, list):
+            rows = [r for r in obj if isinstance(r, dict)]
+        else:
+            continue
+        if not rows:
+            continue
+        # columns from union keys (keep stable order by first row then extras)
+        keys: list[str] = list(rows[0].keys())
+        for r in rows[1:]:
+            for k in r.keys():
+                if k not in keys:
+                    keys.append(k)
+        columns = [{"title": k, "dataIndex": k} for k in keys]
+        return {"columns": columns, "data": rows}
+
+    return None
+
+
 def _sse(data: str, event: str | None = None) -> str:
     # 只发 data，保持前端解析简单；需要事件名时再扩展
     if event:
@@ -198,7 +250,25 @@ async def chat_stream(
         # 立即回一个小片段，提升“首字符 <2s”体感（即便 LLM 还没回来）
         yield _sse(json.dumps({"type": "status", "message": "thinking"}, ensure_ascii=False)).encode("utf-8")
 
-        answer = await ask(payload.message, session_key=session_key)
+        trace_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+
+        def _sink(ev: dict[str, Any]) -> None:
+            try:
+                trace_queue.put_nowait(ev)
+            except Exception:
+                pass
+
+        ask_task = asyncio.create_task(ask(payload.message, session_key=session_key, trace_sink=_sink))
+
+        # 在 LLM 运行期间，把工具/skill 事件实时推给前端
+        while not ask_task.done() or not trace_queue.empty():
+            try:
+                ev = await asyncio.wait_for(trace_queue.get(), timeout=0.25)
+                yield _sse(json.dumps({"type": "trace", "event": ev}, ensure_ascii=False)).encode("utf-8")
+            except asyncio.TimeoutError:
+                pass
+
+        answer, trace = await ask_task
 
         # 按块流式输出（非 token 级，但足够驱动打字机效果）
         chunk_size = 120
@@ -207,12 +277,13 @@ async def chat_stream(
             yield _sse(json.dumps({"type": "delta", "content": chunk}, ensure_ascii=False)).encode("utf-8")
 
         content, content_type, extra = _parse_assistant_content(answer)
+        merged_extra = {"parsed": extra, "trace": trace} if (extra is not None or trace) else None
         assistant_msg = Message(
             conversation_id=conv.id,
             role="assistant",
             content=content or "",
             content_type=content_type,
-            extra=extra,
+            extra=merged_extra,
         )
         db.add(assistant_msg)
         await db.commit()
