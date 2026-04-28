@@ -35,10 +35,16 @@ import pandas as pd
 # 不管从哪里 import 进来，WORKSPACE 永远指向 nanobot/
 WORKSPACE = Path(__file__).resolve().parent
 
-# DB 路径：默认内置在 nanobot/data/，打包进镜像即可直接用；
-# 需要覆盖（换数据库文件、共享存储等）时通过环境变量 STOCK_DB_PATH 指定。
-_DEFAULT_DB = WORKSPACE / "data" / "stock_prices_history.db"
-DB_PATH = Path(os.environ.get("STOCK_DB_PATH", str(_DEFAULT_DB))).resolve()
+# 数据库连接：
+# 旧版使用 SQLite 文件（STOCK_DB_PATH），现统一改为 MySQL（STOCK_DATABASE_URL / DATABASE_URL）。
+# 为兼容迁移期，可仍接受 STOCK_DB_PATH，但优先使用 MySQL 连接串。
+_DEFAULT_SQLITE_DB = WORKSPACE / "data" / "stock_prices_history.db"
+DB_PATH = Path(os.environ.get("STOCK_DB_PATH", str(_DEFAULT_SQLITE_DB))).resolve()
+STOCK_DATABASE_URL = (
+    os.environ.get("STOCK_DATABASE_URL")
+    or os.environ.get("DATABASE_URL")
+    or ""
+).strip()
 CHARTS_DIR = WORKSPACE / "charts"
 CHARTS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -98,10 +104,10 @@ def build_result_markdown(df: pd.DataFrame) -> str:
 def _engine():
     # 延迟导入：skill script 冷启动时能省一点时间，且便于按需使用
     from sqlalchemy import create_engine
-    return create_engine(
-        f"sqlite:///{DB_PATH.as_posix()}",
-        connect_args={"check_same_thread": False},
-    )
+    if STOCK_DATABASE_URL:
+        return create_engine(STOCK_DATABASE_URL, pool_pre_ping=True, pool_recycle=3600)
+    # 兼容：未配置 MySQL 时回退到 SQLite（主要用于本地旧数据排查）
+    return create_engine(f"sqlite:///{DB_PATH.as_posix()}", connect_args={"check_same_thread": False})
 
 
 def load_stock_daily_range(ts_code: str, start: str, end: str) -> pd.DataFrame | None:

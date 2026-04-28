@@ -1,6 +1,6 @@
 ---
 name: stock-sql
-description: 本地 A 股日线 SQLite 的表结构、查询范例与 SELECT 列最佳实践；任何涉及数据查询、筛选、回溯、画图的问题都先读这份。
+description: A 股日线 MySQL 的表结构、查询范例与 SELECT 列最佳实践；任何涉及数据查询、筛选、回溯、画图的问题都先读这份。
 metadata: {"nanobot":{"emoji":"🗃️","requires":{"bins":["python"]}}}
 ---
 
@@ -11,7 +11,7 @@ metadata: {"nanobot":{"emoji":"🗃️","requires":{"bins":["python"]}}}
 
 ## 数据库
 
-- 方言：SQLite（本地文件）
+- 方言：MySQL 8
 - 表：`stock_daily`（单表，已含所有个股的后复权日线）
 - 只读；禁止 INSERT / UPDATE / DELETE / DDL
 
@@ -20,7 +20,7 @@ metadata: {"nanobot":{"emoji":"🗃️","requires":{"bins":["python"]}}}
 | 列名          | 类型    | 含义                                           |
 | ------------- | ------- | ---------------------------------------------- |
 | `ts_code`     | TEXT    | Tushare 代码，如 `600519.SH`、`000858.SZ`      |
-| `trade_date`  | TEXT    | 交易日，`YYYY-MM-DD`                           |
+| `trade_date`  | DATE    | 交易日，`YYYY-MM-DD`                           |
 | `stock_name`  | TEXT    | 股票名称                                       |
 | `open`        | REAL    | 开盘价                                         |
 | `high`        | REAL    | 最高价                                         |
@@ -37,12 +37,12 @@ metadata: {"nanobot":{"emoji":"🗃️","requires":{"bins":["python"]}}}
 ## SQL 规范
 
 - 只允许以 `SELECT` 或 `WITH ... SELECT` 开头；`exc_sql` 会拒绝其他语句
-- **始终带 `ORDER BY trade_date`**（或需要的字段），避免 SQLite 乱序
+- **始终带 `ORDER BY trade_date`**（或需要的字段），避免结果乱序
 - 排行榜记得用 `LIMIT N`
 
-### ⚠️ 日期格式（最常见的翻车点）
+### ⚠️ 日期与函数（最常见的翻车点）
 
-`trade_date` 列是 **`YYYY-MM-DD` 带连字符的字符串**（SQLite TEXT），**不是** Tushare 原始的 `yyyymmdd` 整数格式。**任何日期字面量都必须带连字符**，否则字符串比较会匹配不到任何行。
+`trade_date` 列是 MySQL `DATE`。日期字面量仍建议用 **`'YYYY-MM-DD'`** 字符串写法（MySQL 会自动转换），避免把 Tushare 原始 `yyyymmdd`（如 `'20250101'`）写进 SQL。
 
 ✅ 正确：
 
@@ -57,6 +57,20 @@ WHERE trade_date BETWEEN '2025-01-01' AND '2025-12-31'
 ```sql
 WHERE trade_date BETWEEN '20250101' AND '20251231'        -- 无连字符
 WHERE trade_date >= 20250101                               -- 无引号 + 无连字符
+```
+
+### ⚠️ MySQL 近 N 天写法（不要用 SQLite 的 date('now', ...)）
+
+✅ MySQL 正确：
+
+```sql
+WHERE trade_date >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
+```
+
+❌ SQLite 写法（MySQL 不支持，会导致工具执行失败，LLM 会开始“自救”反复调用工具直到触发 20 次上限）：
+
+```sql
+WHERE trade_date >= date('now', '-90 days')
 ```
 
 ## SELECT 列最佳实践（**直接影响图表质量**）
@@ -98,7 +112,7 @@ ORDER BY trade_date ASC;
 SELECT trade_date, close
 FROM stock_daily
 WHERE ts_code = '000858.SZ'
-  AND trade_date >= date('now', '-90 days')
+  AND trade_date >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
 ORDER BY trade_date ASC;
 ```
 

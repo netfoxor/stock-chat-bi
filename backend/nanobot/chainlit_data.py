@@ -128,10 +128,20 @@ def init_schema(db_path: Path) -> None:
 
 
 def build_data_layer() -> SQLAlchemyDataLayer:
-    """构造 Chainlit Data Layer；同时确保 schema 已就绪。"""
+    """
+    构造 Chainlit Data Layer。
+
+    统一改为 MySQL：
+      - 优先读取 CHAINLIT_DATABASE_URL
+      - 其次复用 DATABASE_URL
+
+    兼容迁移期：若未配置 MySQL 连接串，则回退到旧的 SQLite（memory/chainlit.db）。
+    """
+    mysql_url = (os.environ.get("CHAINLIT_DATABASE_URL") or os.environ.get("DATABASE_URL") or "").strip()
+    if mysql_url:
+        return SQLAlchemyDataLayer(conninfo=mysql_url)
+
     db_path = _default_db_path()
     init_schema(db_path)
-    # aiosqlite 的连接串格式：sqlite+aiosqlite:///<绝对路径>
-    # Windows 下用 as_posix() 把反斜杠转成正斜杠，否则 URL 解析器会报错
     conninfo = f"sqlite+aiosqlite:///{db_path.as_posix()}"
     return SQLAlchemyDataLayer(conninfo=conninfo)

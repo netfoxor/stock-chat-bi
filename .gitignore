@@ -17,3 +17,6 @@ deploy/dist/
 # Chainlit 缓存
 .chainlit/cache/
 .chainlit/translations/
+
+node_modules/
+.venv/

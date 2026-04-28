@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""exc_sql —— 在 SQLite 上执行只读 SQL，返回 markdown + ECharts 图表。"""
+"""exc_sql —— 在 MySQL 上执行只读 SQL，返回 markdown + ECharts 图表。"""
 
 from __future__ import annotations
 
@@ -20,10 +20,11 @@ _BAD_DATE_WINDOW_RE = re.compile(
 )
 # 任何 SQL 字面里的 8 位纯数字日期（兜底，比窗口规则更宽）
 _ANY_YYYYMMDD_LITERAL_RE = re.compile(r"['\"](20\d{6}|19\d{6})['\"]")
+_SQLITE_DATE_NOW_RE = re.compile(r"date\s*\(\s*['\"]now['\"]\s*,", re.IGNORECASE)
 
 
 class ExcSQLTool(Tool):
-    """在本地 SQLite 上执行只读 SQL 并智能出图（K 线 / 折线 / 多子图）。"""
+    """在 MySQL 上执行只读 SQL 并智能出图（K 线 / 折线 / 多子图）。"""
 
     @property
     def name(self) -> str:
@@ -32,7 +33,7 @@ class ExcSQLTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "在本地 SQLite 的 stock_daily 表上执行只读 SQL 查询（仅 SELECT / WITH SELECT）；"
+            "在 MySQL 的 stock_daily 表上执行只读 SQL 查询（仅 SELECT / WITH SELECT）；"
             "自动生成 markdown 表格、数值描述与交互式 ECharts 图表（K 线 / 折线 / 量价副图自动识别）。"
             "图表以 ![label](chart:charts/xxx.json) markdown 占位返回，由前端渲染。"
         )
@@ -58,8 +59,6 @@ class ExcSQLTool(Tool):
         sql_input = (kwargs.get("sql_input") or "").strip()
         if not sql_input:
             return "错误：sql_input 不能为空。"
-        if not core.DB_PATH.is_file():
-            return f"错误：未找到数据库文件 {core.DB_PATH}。"
         if not core.is_read_only_sql(sql_input):
             return "错误：仅允许 SELECT 或 WITH ... SELECT 查询。"
 
@@ -102,6 +101,16 @@ def _check_sql_pitfalls(sql: str) -> str | None:
             f"字符串比较匹配不到任何行。\n\n"
             f"🛠 修复：把 SQL 里每一处 `'{bad}'` 改成 `'{fixed}'`（以及其他同类日期常量）后重试。\n"
             f"✅ 正确示例：`WHERE trade_date >= '2025-01-01' AND trade_date <= '2025-12-31'`"
+        )
+
+    # 坑 2：把 SQLite 的 date('now', '-N days') 写进 MySQL
+    if _SQLITE_DATE_NOW_RE.search(sql):
+        return (
+            "错误：检测到 SQLite 方言的 `date('now', ...)` 写法。当前数据库是 **MySQL**，"
+            "请改用 MySQL 的日期函数。\n\n"
+            "🛠 修复示例：\n"
+            "- 近 30 天：`trade_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)`\n"
+            "- 近 90 天：`trade_date >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)`\n"
         )
     return None
 
