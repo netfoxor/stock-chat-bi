@@ -3,7 +3,7 @@
     "defaults": {
       "workspace": ".",
       "provider": "dashscope",
-      "model": "qwen3.6-plus",
+      "model": "qwen3.6-plus-2026-04-02",
       "max_tokens": 4096,
       "context_window_tokens": 32768,
       "max_tool_result_chars": 32000,

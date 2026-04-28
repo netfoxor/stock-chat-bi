@@ -462,7 +462,7 @@ def build_llm_cfg() -> dict:
         "DASHSCOPE_OPENAI_BASE",
         "https://dashscope.aliyuncs.com/compatible-mode/v1",
     ).strip()
-    model = os.getenv("QWEN_AGENT_MODEL", "qwen3.6-plus").strip()
+    model = os.getenv("QWEN_AGENT_MODEL", "qwen3.6-plus-2026-04-02").strip()
     return {
         "model": model,
         "model_server": base,

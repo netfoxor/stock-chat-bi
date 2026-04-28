@@ -19,13 +19,13 @@ cd nanobot
 powershell -ExecutionPolicy Bypass -File deploy\build_and_save.ps1
 ```
 
-产物：
+产物（文件名带打包时间戳，便于同目录留历史版本）：
 
 ```
-nanobot/deploy/dist/nanobot-image.tar.gz     # 镜像（含 SQLite 数据库）
+nanobot/deploy/dist/nanobot-image-YYYYMMDD-HHmmss.tar.gz     # 镜像（含 SQLite 数据库）
 ```
 
-预计 gzip 后体积 ~300 MB。
+预计 gzip 后体积 ~300 MB。下文统一以 `nanobot-image-*.tar.gz` 指代这个文件。
 
 > 如果这一步报 `python:3.11-slim-bookworm ... dial tcp 198.18.0.157:443 ...failed`，
 > 是 Docker Desktop 的 registry mirror 跟本机代理冲突，见文末 **常见问题**。
@@ -38,7 +38,7 @@ nanobot/deploy/dist/nanobot-image.tar.gz     # 镜像（含 SQLite 数据库）
 
 | 文件 | 来源 |
 |---|---|
-| `nanobot-image.tar.gz` | `deploy/dist/nanobot-image.tar.gz` |
+| `nanobot-image-*.tar.gz` | `deploy/dist/nanobot-image-YYYYMMDD-HHmmss.tar.gz`（最新那个） |
 | `docker-compose.yml` | 仓库根 |
 | `.env` | 复制仓库根的 `.env.example`，填入 `DASHSCOPE_API_KEY=sk-xxxx` |
 
@@ -51,15 +51,15 @@ nanobot/deploy/dist/nanobot-image.tar.gz     # 镜像（含 SQLite 数据库）
 **菜单**：`主机 → 文件`
 
 1. 进入 `/opt/`，新建文件夹 `nanobot`，进入该目录
-2. 点右上角 **上传**，把 `docker-compose.yml`、`.env`、`nanobot-image.tar.gz` 三个文件全部上传
+2. 点右上角 **上传**，把 `docker-compose.yml`、`.env`、`nanobot-image-*.tar.gz` 三个文件全部上传
 3. 确认 `.env` 文件存在（有些浏览器会默认隐藏 `.` 开头文件，1Panel 通常会显示）
 
-> 路径最终长这样：
+> 路径最终长这样（文件名里的时间戳以你打包当天为准）：
 > ```
 > /opt/nanobot/
 > ├── docker-compose.yml
 > ├── .env
-> └── nanobot-image.tar.gz
+> └── nanobot-image-20260421-175900.tar.gz
 > ```
 
 ### 3.2 导入离线镜像
@@ -67,15 +67,17 @@ nanobot/deploy/dist/nanobot-image.tar.gz     # 镜像（含 SQLite 数据库）
 **菜单**：`容器 → 镜像`
 
 1. 点右上角 **导入镜像**
-2. 来源选 **服务器文件**，路径填 `/opt/nanobot/nanobot-image.tar.gz`
+2. 来源选 **服务器文件**，路径填 `/opt/nanobot/nanobot-image-<时间戳>.tar.gz`
 3. 确认，等几秒钟，刷新镜像列表
 4. 列表里应该能看到 `nanobot-app:latest`，体积约 800 MB
 
 > 如果面板没有"服务器文件"选项，可以直接在 SSH 里跑：
 > ```bash
-> cd /opt/nanobot && gunzip -c nanobot-image.tar.gz | docker load
+> cd /opt/nanobot && gunzip -c nanobot-image-*.tar.gz | docker load
 > ```
 > 同样会把 `nanobot-app:latest` 导入到本机 Docker。
+> 镜像 tag 固定是 `nanobot-app:latest`，所以不管哪个时间戳的包导入后都会覆盖更新；
+> 服务器磁盘紧张的话可以 `rm` 掉旧的 `nanobot-image-*.tar.gz`。
 
 ### 3.3 创建 Compose 编排
 
@@ -115,7 +117,7 @@ nanobot/deploy/dist/nanobot-image.tar.gz     # 镜像（含 SQLite 数据库）
 | 重启 | 容器 → 编排 → `nanobot` → **重启** |
 | 停止 | 容器 → 编排 → `nanobot` → **停止** |
 | 改密钥 / 端口 | 主机 → 文件 → `/opt/nanobot/.env` → 编辑，再到编排里 **重启** |
-| 更新镜像 | 传新的 `nanobot-image.tar.gz` → 镜像 → 导入 → 编排 → 重启 |
+| 更新镜像 | 传新的 `nanobot-image-*.tar.gz` → 镜像 → 导入 → 编排 → 重启 |
 
 ---
 

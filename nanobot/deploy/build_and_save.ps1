@@ -19,10 +19,12 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RootDir   = (Resolve-Path (Join-Path $ScriptDir "..")).Path
 Set-Location $RootDir
 
-$Image   = "nanobot-app:latest"
-$OutDir  = Join-Path $RootDir "deploy\dist"
-$TarPath = Join-Path $OutDir "nanobot-image.tar"
-$GzPath  = Join-Path $OutDir "nanobot-image.tar.gz"
+$Image     = "nanobot-app:latest"
+$OutDir    = Join-Path $RootDir "deploy\dist"
+# 打包时间戳：方便同目录下留历史版本，便于回滚 / 对比大小
+$Timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
+$TarPath   = Join-Path $OutDir "nanobot-image-$Timestamp.tar"
+$GzPath    = Join-Path $OutDir "nanobot-image-$Timestamp.tar.gz"
 
 function Write-Stage([string]$msg) {
     Write-Host ""
@@ -121,10 +123,11 @@ Write-Host ""
 Write-Host "离线包：" -ForegroundColor Green
 Write-Host "  $GzPath"
 Write-Host ""
+$GzFileName = Split-Path -Leaf $GzPath
 Write-Host "传到 1Panel 服务器 /opt/nanobot/ 的文件：" -ForegroundColor Green
-Write-Host "  1. deploy/dist/nanobot-image.tar.gz    (镜像，含 DB)"
-Write-Host "  2. docker-compose.yml                  (编排文件)"
-Write-Host "  3. .env                                (从 .env.example 复制并填 DASHSCOPE_API_KEY)"
+Write-Host "  1. deploy/dist/$GzFileName    (镜像，含 DB)"
+Write-Host "  2. docker-compose.yml                             (编排文件)"
+Write-Host "  3. .env                                           (从 .env.example 复制并填 DASHSCOPE_API_KEY)"
 Write-Host ""
 Write-Host "然后在 1Panel UI：容器 → 镜像 → 导入镜像，再 容器 → 编排 → 创建编排（本地目录 /opt/nanobot）"
 Write-Host "完整步骤见 deploy/README.md"

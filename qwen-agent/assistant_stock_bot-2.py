@@ -2,10 +2,10 @@
 股票查询助手（增强可视化）：基于 SQLite 与 qwen-agent。
 相对 assistant_stock_bot.py：行数较多时自动用折线图；横轴均匀抽样展示（默认最多 10 个点）。
 
-LLM：Qwen3.6-Plus 等模型请走 DashScope **OpenAI 兼容**接口，避免原生 Generation 报
+LLM：qwen3.6-plus-2026-04-02 等模型请走 DashScope **OpenAI 兼容**接口，避免原生 Generation 报
 InvalidParameter「url error」。环境变量：
 - DASHSCOPE_API_KEY：必填
-- QWEN_AGENT_MODEL：默认 qwen3.6-plus，可改为 qwen3.6-plus-2026-04-02 等
+- QWEN_AGENT_MODEL：默认 qwen3.6-plus-2026-04-02，可改为 qwen3.6-plus 等
 - DASHSCOPE_OPENAI_BASE：默认 https://dashscope.aliyuncs.com/compatible-mode/v1
   国际站可设为 https://dashscope-intl.aliyuncs.com/compatible-mode/v1
 
@@ -342,7 +342,7 @@ def build_llm_cfg() -> dict:
         "DASHSCOPE_OPENAI_BASE",
         "https://dashscope.aliyuncs.com/compatible-mode/v1",
     ).strip()
-    model = os.getenv("QWEN_AGENT_MODEL", "qwen3.6-plus").strip()
+    model = os.getenv("QWEN_AGENT_MODEL", "qwen3.6-plus-2026-04-02").strip()
     return {
         "model": model,
         "model_server": base,

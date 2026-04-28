@@ -107,7 +107,7 @@ nanobot/
 | `CHAINLIT_USERNAME` | | 登录用户名，默认 `admin` |
 | `CHAINLIT_PASSWORD` | | 登录密码，默认 `admin`（**对外暴露务必改掉**） |
 | `CHAINLIT_DB_PATH` | | 聊天历史 SQLite 路径，默认 `nanobot/memory/chainlit.db` |
-| `QWEN_AGENT_MODEL` | | 覆盖 `config.json` 里的模型名，默认 `qwen3.6-plus` |
+| `QWEN_AGENT_MODEL` | | 覆盖 `config.json` 里的模型名，默认 `qwen3.6-plus-2026-04-02` |
 | `STOCK_DB_PATH` | | 覆盖 SQLite 库路径，默认 `nanobot/data/stock_prices_history.db` |
 | `HOST_PORT` | | 仅 docker-compose 用，映射到宿主机的端口（默认 `10001`） |
 
