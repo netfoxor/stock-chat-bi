@@ -22,7 +22,7 @@ def _ensure_nanobot_on_path() -> None:
 def _load_env_files() -> None:
     """
     uvicorn/fastapi 不会自动读取 .env；但 nanobot 直接用 os.environ 取 DASHSCOPE_API_KEY。
-    这里显式加载 backend/.env（以及可选的 backend/nanobot/.env），避免出现“明明写了 .env 但取不到”的情况。
+    这里显式加载 backend/.env，避免出现“明明写了 .env 但取不到”的情况。
     """
     try:
         from dotenv import load_dotenv  # type: ignore
@@ -32,7 +32,6 @@ def _load_env_files() -> None:
     here = Path(__file__).resolve()
     backend_dir = here.parents[2]
     load_dotenv(backend_dir / ".env", override=False)
-    load_dotenv(backend_dir / "nanobot" / ".env", override=False)
 
 
 @lru_cache(maxsize=1)

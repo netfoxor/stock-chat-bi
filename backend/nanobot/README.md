@@ -21,7 +21,7 @@ pip install -r requirements.txt
 chainlit create-secret
 #    把输出的那串 CHAINLIT_AUTH_SECRET="..." 复制进 .env
 
-# 4. 配环境变量（.env 方式更方便：复制 .env.example 改里面的值）
+# 4. 配环境变量（统一在 backend/.env 里配置）
 $env:DASHSCOPE_API_KEY = "sk-xxxxxxxxxxxxxxxxxxxxxxxx"
 $env:CHAINLIT_AUTH_SECRET = "上一步生成的那串"
 
@@ -33,7 +33,7 @@ chainlit run app_chainlit.py -w
 可用 `CHAINLIT_USERNAME` / `CHAINLIT_PASSWORD` 覆盖。
 
 > Linux / macOS 把 `$env:X = "..."` 改成 `export X=...` 即可。
-> 推荐直接用 `.env`（复制 `.env.example`），Chainlit 会自动加载，不用每次 export。
+> 推荐直接用 `backend/.env`（复制 `backend/.env.example`），后端会显式加载该文件，不用每次 export。
 
 ### 💬 聊天历史
 
@@ -89,7 +89,7 @@ nanobot/
 ├── requirements.txt
 ├── Dockerfile
 ├── docker-compose.yml
-├── .env.example
+├── .env.example              # 已废弃（占位）；实际以 backend/.env.example 为准
 ├── AGENTS.md                # 给 LLM 读的系统规范（能力索引 + 输出纪律）
 └── deploy/
     ├── README.md            # 1Panel 离线部署完整步骤
@@ -111,7 +111,7 @@ nanobot/
 | `STOCK_DB_PATH` | | 覆盖 SQLite 库路径，默认 `nanobot/data/stock_prices_history.db` |
 | `HOST_PORT` | | 仅 docker-compose 用，映射到宿主机的端口（默认 `10001`） |
 
-完整模板见 [`.env.example`](./.env.example)。
+完整模板见 `backend/.env.example`。
 
 ---
 

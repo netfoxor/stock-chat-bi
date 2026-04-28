@@ -13,7 +13,8 @@
     }
   },
   "providers": {
-    "dashscope": { "api_key": "" }
+    "dashscope": { "api_key": "" },
+    "openai": { "api_key": "", "base_url": "" }
   },
   "tools": {
     "web": { "enable": false },

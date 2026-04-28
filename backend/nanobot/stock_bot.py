@@ -21,8 +21,17 @@
   前端 :  chainlit run app_chainlit.py -w
 
 环境变量：
-  DASHSCOPE_API_KEY  必填
-  QWEN_AGENT_MODEL   可选，默认读 config.json 的 qwen3.6-plus-2026-04-02
+  - 方案 A（默认）：DashScope / 通义千问
+      DASHSCOPE_API_KEY  必填
+      QWEN_AGENT_MODEL   可选，覆盖 config.json 的 model
+
+  - 方案 B：OpenAI 兼容协议（用于接入阿里“Coding Plan”等 OpenAI-compatible 网关）
+      OPENAI_API_KEY     必填
+      OPENAI_BASE_URL    必填（例如 https://xxx/v1）
+      OPENAI_MODEL       可选（例如 qwen-coder / 你的网关模型名）
+
+  - 通用：
+      NANOBOT_PROVIDER   可选：openai | dashscope（默认自动判断：有 OPENAI_API_KEY 则 openai，否则 dashscope）
 """
 
 from __future__ import annotations
@@ -62,17 +71,33 @@ class PrintHook(AgentHook):
 
 
 def build_bot() -> Nanobot:
-    dashscope_key = os.environ.get("DASHSCOPE_API_KEY", "").strip()
-    if not dashscope_key:
-        print("[Error] 未设置 DASHSCOPE_API_KEY 环境变量")
-        sys.exit(1)
-
     config = load_config(WORKSPACE / "config.json")
-    config.providers.dashscope.api_key = dashscope_key
     config.agents.defaults.workspace = str(WORKSPACE)
 
-    if model_override := os.environ.get("QWEN_AGENT_MODEL", "").strip():
-        config.agents.defaults.model = model_override
+    provider_override = os.environ.get("NANOBOT_PROVIDER", "").strip().lower()
+    openai_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    openai_base_url = os.environ.get("OPENAI_BASE_URL", "").strip()
+
+    use_openai = provider_override == "openai" or (not provider_override and bool(openai_key))
+    if use_openai:
+        if not openai_key or not openai_base_url:
+            print("[Error] 选择 OpenAI 兼容协议时，需要同时设置 OPENAI_API_KEY + OPENAI_BASE_URL")
+            sys.exit(1)
+        config.agents.defaults.provider = "openai"
+        # nanobot-ai 若支持 openai provider，则这里会生效；否则会在 _make_provider 时报错，便于定位。
+        config.providers.openai.api_key = openai_key
+        config.providers.openai.base_url = openai_base_url
+        if model_override := os.environ.get("OPENAI_MODEL", "").strip():
+            config.agents.defaults.model = model_override
+    else:
+        dashscope_key = os.environ.get("DASHSCOPE_API_KEY", "").strip()
+        if not dashscope_key:
+            print("[Error] 未设置 DASHSCOPE_API_KEY 环境变量（或改用 OPENAI_API_KEY/OPENAI_BASE_URL）")
+            sys.exit(1)
+        config.agents.defaults.provider = "dashscope"
+        config.providers.dashscope.api_key = dashscope_key
+        if model_override := os.environ.get("QWEN_AGENT_MODEL", "").strip():
+            config.agents.defaults.model = model_override
 
     provider = _make_provider(config)
     defaults = config.agents.defaults
@@ -109,6 +134,7 @@ def build_bot() -> Nanobot:
             if p.is_dir() and (p / "SKILL.md").is_file()
         )
 
+    print(f"[nanobot] provider={defaults.provider}")
     print(f"[nanobot] model={defaults.model}")
     print(f"[nanobot] DB={core.DB_PATH}")
     print(f"[nanobot] 已注册工具: {', '.join(loaded_names) or '（无）'}")
