@@ -37,17 +37,31 @@ CREATE TABLE IF NOT EXISTS messages (
   CONSTRAINT fk_messages_conversation FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+CREATE TABLE IF NOT EXISTS dashboards (
+  id          INT PRIMARY KEY AUTO_INCREMENT,
+  user_id     INT NOT NULL,
+  name        VARCHAR(200) DEFAULT '我的大屏',
+  created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  KEY idx_dashboards_user (user_id),
+  CONSTRAINT fk_dashboards_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS dashboard_widgets (
   id          INT PRIMARY KEY AUTO_INCREMENT,
   user_id     INT NOT NULL,
+  dashboard_id INT NULL,
   title       VARCHAR(200) DEFAULT '未命名',
   type        ENUM('chart', 'table') NOT NULL,
   data        JSON NOT NULL,
   layout      JSON NOT NULL,
+  config      JSON NULL,
   created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   KEY idx_widgets_user (user_id),
-  CONSTRAINT fk_widgets_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  KEY idx_widgets_dashboard (dashboard_id),
+  CONSTRAINT fk_widgets_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  CONSTRAINT fk_widgets_dashboard FOREIGN KEY (dashboard_id) REFERENCES dashboards(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ----------------------------
