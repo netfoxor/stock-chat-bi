@@ -291,5 +291,13 @@ async def chat_stream(
         # 流式期间可能漏合并某条 trace SSE，done 时附带完整 trace 校正前端 Timeline
         yield _sse(json.dumps({"type": "done", "trace": trace}, ensure_ascii=False)).encode("utf-8")
 
-    return StreamingResponse(gen(), media_type="text/event-stream")
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 

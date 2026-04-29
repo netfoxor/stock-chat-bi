@@ -29,9 +29,31 @@ export function useSSE() {
       signal: ac.signal,
     });
 
-    if (!res.ok || !res.body) {
+    if (!res.ok) {
       setRunning(false);
-      throw new Error(`SSE failed: ${res.status}`);
+      let msg = `请求失败 (${res.status})`;
+      try {
+        const ct = res.headers.get("content-type") ?? "";
+        if (ct.includes("application/json")) {
+          const j = (await res.json()) as { detail?: unknown };
+          if (typeof j?.detail === "string" && j.detail.trim()) {
+            msg = j.detail;
+          } else if (Array.isArray(j?.detail)) {
+            const first = j.detail[0] as { msg?: unknown } | undefined;
+            if (typeof first?.msg === "string") msg = first.msg;
+          }
+        } else {
+          const t = await res.text();
+          if (t.trim()) msg = t.slice(0, 300);
+        }
+      } catch {
+        // ignore
+      }
+      throw new Error(msg);
+    }
+    if (!res.body) {
+      setRunning(false);
+      throw new Error("服务端未返回可读流（可能为代理断开）");
     }
 
     const reader = res.body.getReader();

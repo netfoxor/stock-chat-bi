@@ -2,6 +2,7 @@ import { Button, Divider, Layout, List, Modal, Space, Typography, Checkbox, mess
 import { MinusOutlined, RobotOutlined } from "@ant-design/icons";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../api/client";
+import { parseApiErrorMessage } from "../../api/error";
 import { domRectToSpot, OnboardingSpotlight, type SpotRect } from "../../components/OnboardingSpotlight";
 import { useSSE } from "../../hooks/useSSE";
 import { useChatStore } from "../../store/chatStore";
@@ -164,23 +165,28 @@ export function ChatWindow() {
 
     clearStreaming();
 
-    await start(
-      "/chat/stream",
-      { conversation_id: cid, message: text },
-      (evt) => {
-        if (evt.type === "trace") {
-          upsertStreamingTrace(evt.event);
-        }
-        if (evt.type === "delta") {
-          upsertStreamingAssistant(evt.content);
-        }
-        if (evt.type === "done") {
-          const d = evt as { trace?: unknown };
-          if (Array.isArray(d.trace)) applyFinalTrace(d.trace);
-          loadMessages(cid!).catch(() => void 0);
-        }
-      },
-    );
+    try {
+      await start(
+        "/chat/stream",
+        { conversation_id: cid, message: text },
+        (evt) => {
+          if (evt.type === "trace") {
+            upsertStreamingTrace(evt.event);
+          }
+          if (evt.type === "delta") {
+            upsertStreamingAssistant(evt.content);
+          }
+          if (evt.type === "done") {
+            const d = evt as { trace?: unknown };
+            if (Array.isArray(d.trace)) applyFinalTrace(d.trace);
+            loadMessages(cid!).catch(() => void 0);
+          }
+        },
+      );
+    } catch (err) {
+      message.error(parseApiErrorMessage(err, "对话生成失败"));
+      clearStreaming();
+    }
   };
 
   const remeasureSendHole = useCallback(() => {
