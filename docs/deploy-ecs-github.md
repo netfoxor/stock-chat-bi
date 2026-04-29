@@ -55,18 +55,20 @@ git clone git@github.com:<你的>/<仓库名>.git .
 
 本 CI 仅负责「拉代码 + compose 再起」。生产 compose 默认不改时，可把 Secret **`DEPLOY_COMPOSE_FILES`** 留空（见下）。
 
-### 4. GitHub 仓库 Secrets
+### 4. GitHub Actions 使用的 Secrets
 
-在 **Settings → Secrets and variables → Actions** 中新建：
+在 **Settings → Secrets and variables → Actions** 中可放在 **Repository secrets**，或放在 **Environments**（如 `prod`）下的 **Environment secrets**。
 
 | Name | 必填 | 说明 |
 |------|------|------|
 | `DEPLOY_HOST` | ✅ | ECS 公网 IP 或可解析域名 |
 | `DEPLOY_USER` | ✅ | SSH 用户名，如 `root` |
 | `DEPLOY_SSH_KEY` | ✅ | SSH **私钥**全文（含 `BEGIN`/`END` 行） |
-| `DEPLOY_PORT` | 否 | SSH 端口，不写则 `22` |
+| `DEPLOY_PORT` | 否 | SSH 端口，不配则工作流里默认 `22` |
 | `DEPLOY_APP_DIR` | ✅ | 服务器上克隆目录的绝对路径，如 `/opt/stock-chat-bi` |
 | `DEPLOY_COMPOSE_FILES` | 否 | 若不用默认 `docker-compose.yml`，可填 `-f docker-compose.yml -f docker-compose.prod.yml`（含 `-f`，多个文件用空格） |
+
+**重要**：若你把上述变量建在 **Environment `prod`** 里（而不是仓库级 Repository secrets），则 **`.github/workflows/deploy-ecs.yml`** 里 `deploy` job **必须** 带 **`environment: prod`**，否则工作流读不到这些值，会报 **`missing server host`**。若你改为全部使用 **Repository secrets**，且不想走 Environment，请从 workflow 中 **删除** `environment: prod` 这一行。
 
 SSH 校验主机指纹：若在 Actions 里出现 `REMOTE HOST IDENTIFICATION HAS CHANGED`，把 ECS 当前的 `ssh-keyscan -p端口 host` 的一行可考虑写入 **`DEPLOY_HOST_FINGERPRINT`**（见 Workflow 注释；也可先用手动跑一次 SSH 信任的流程）。
 
@@ -96,5 +98,7 @@ SSH 校验主机指纹：若在 Actions 里出现 `REMOTE HOST IDENTIFICATION HA
 | Permission denied | 私钥与用户不匹配、`authorized_keys` 未配置 |
 | git pull / reset 失败 | 目录未 clone、`origin`、Deploy key |
 | compose 报错 | 服务器 `.env` 缺失、端口冲突、磁盘满 |
+| `missing server host` | Secrets 写在 **Environment** 但 workflow 未写对应 **`environment:`**；或未配置 `DEPLOY_HOST` |
+| `Unexpected input … script_stop` | 使用了旧版不支持参数；已从 workflow 移除 |
 
 如需「仅打标签才部署」或「手动 workflow_dispatch」，可在 workflow 里加 `workflow_dispatch` 或 `release` 条件。
