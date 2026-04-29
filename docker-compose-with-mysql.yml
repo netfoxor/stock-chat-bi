@@ -16,6 +16,8 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+      args:
+        PIP_INDEX_URL: https://pypi.tuna.tsinghua.edu.cn/simple
     # 运行时变量见 backend/.env（由 backend/.env.example 复制）；勿提交密钥到 Git
     env_file:
       - ./backend/.env
@@ -32,6 +34,7 @@ services:
       dockerfile: Dockerfile
       args:
         VITE_API_BASE_URL: /api
+        NPM_REGISTRY: https://registry.npmmirror.com
     # 容器内 Nginx 仍为 80；宿主机用 5173，避免与整机/1Panel 抢占 80，由 1Panel 再反代到本端口
     ports:
       - "5173:80"

@@ -49,3 +49,4 @@ docker compose -f docker-compose-with-mysql.yml up --build
 
 初始化脚本仍见 `backend/sql/init.sql`（外置库需自行导入或执行一次）。
 
+**构建加速**：Compose 已为镜像构建配置了国内 **PyPI（清华）**、**npm（npmmirror）**；若在境外构建，可自行修改根目录 **`docker-compose*.yml`** 里的 `PIP_INDEX_URL` / `NPM_REGISTRY`（或改为官方默认值）。

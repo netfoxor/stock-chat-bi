@@ -3,10 +3,14 @@ FROM node:20-slim AS build
 
 WORKDIR /app
 
+# npm/pnpm registry（与国内 npmmirror；海外可自行 build-arg 换 registry.npmjs.org）
+ARG NPM_REGISTRY=https://registry.npmmirror.com
+ENV NPM_CONFIG_REGISTRY=${NPM_REGISTRY}
+
 COPY package.json pnpm-lock.yaml ./
 
 RUN corepack enable && corepack prepare pnpm@latest --activate
-RUN pnpm install --frozen-lockfile
+RUN pnpm config set registry "${NPM_REGISTRY}" && pnpm install --frozen-lockfile
 
 COPY index.html tsconfig.json vite.config.ts ./
 COPY src ./src
