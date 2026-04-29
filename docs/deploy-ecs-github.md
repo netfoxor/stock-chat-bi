@@ -63,12 +63,24 @@ git clone git@github.com:<你的>/<仓库名>.git .
 |------|------|------|
 | `DEPLOY_HOST` | ✅ | ECS 公网 IP 或可解析域名 |
 | `DEPLOY_USER` | ✅ | SSH 用户名，如 `root` |
-| `DEPLOY_SSH_KEY` | ✅ | SSH **私钥**全文（含 `BEGIN`/`END` 行） |
+| `DEPLOY_SSH_KEY` | 与下二选一 | SSH **私钥**全文（推荐）；用密码登录时不要配置此项（或删除该 Secret） |
+| `DEPLOY_PASSWORD` | 与上二选一 | **SSH 登录密码**；服务器 `sshd` 须允许 `PasswordAuthentication`（或等价配置） |
 | `DEPLOY_PORT` | 否 | SSH 端口，不配则工作流里默认 `22` |
 | `DEPLOY_APP_DIR` | ✅ | 服务器上克隆目录的绝对路径，如 `/opt/stock-chat-bi` |
 | `DEPLOY_COMPOSE_FILES` | 否 | 若不用默认 `docker-compose.yml`，可填 `-f docker-compose.yml -f docker-compose.prod.yml`（含 `-f`，多个文件用空格） |
+| `DEPLOY_SSH_KEY_PASSPHRASE` | 否 | 仅当 **`DEPLOY_SSH_KEY` 对应的私钥文件本身还设置了密码** 时填写；无密码则不要建此项 |
 
-**重要**：若你把上述变量建在 **Environment `prod`** 里（而不是仓库级 Repository secrets），则 **`.github/workflows/deploy-ecs.yml`** 里 `deploy` job **必须** 带 **`environment: prod`**，否则工作流读不到这些值，会报 **`missing server host`**。若你改为全部使用 **Repository secrets**，且不想走 Environment，请从 workflow 中 **删除** `environment: prod` 这一行。
+**认证方式**：**私钥**与**密码**二选一即可；同时配置时，以 `appleboy/ssh-action` 实际行为为准（一般优先密钥）。**只用密码**时，建议删除（或不要创建）`DEPLOY_SSH_KEY`，避免误传空/错内容导致仍去解析私钥。
+
+**关于 `DEPLOY_SSH_KEY`（私钥）**：必须是 **OpenSSH 可解析的私钥**，整段粘贴，例如：
+
+- 以 **`-----BEGIN OPENSSH PRIVATE KEY-----`** 或 **`-----BEGIN RSA PRIVATE KEY-----`** 开头，以对应的 **`-----END ... PRIVATE KEY-----`** 结尾；
+- **一行都不可少**，含中间换行（在 GitHub Secret 编辑框里粘贴多行即可，**不要**写成一行无换行、也不要在前后加引号）；
+- **不要**把 **`.pub` 公钥** 填进 `DEPLOY_SSH_KEY`；
+- **PuTTY 的 `.ppk`** 需先转成 OpenSSH 格式再粘贴，例如：  
+  `puttygen key.ppk -O private-openssh -o id_ed25519`，再把 `id_ed25519` 全文粘到 Secret。
+
+若仍报 `ssh: no key found`，多为 Secret 内容为空、剪贴板缺了头尾行，或私钥与 ECS 上 **`authorized_keys`** 里对应的公钥不匹配（请确认配的是 **配对** 的一把私钥）。
 
 SSH 校验主机指纹：若在 Actions 里出现 `REMOTE HOST IDENTIFICATION HAS CHANGED`，把 ECS 当前的 `ssh-keyscan -p端口 host` 的一行可考虑写入 **`DEPLOY_HOST_FINGERPRINT`**（见 Workflow 注释；也可先用手动跑一次 SSH 信任的流程）。
 
@@ -95,10 +107,11 @@ SSH 校验主机指纹：若在 Actions 里出现 `REMOTE HOST IDENTIFICATION HA
 | 现象 | 可能原因 |
 |------|----------|
 | SSH timeout | 安全组未放行、`sshd` 未监听、IP 变了 |
-| Permission denied | 私钥与用户不匹配、`authorized_keys` 未配置 |
+| Permission denied | 私钥与用户不匹配、`authorized_keys` 未配置；或**用密码**时密码错误 / 服务器禁止密码登录 |
 | git pull / reset 失败 | 目录未 clone、`origin`、Deploy key |
 | compose 报错 | 服务器 `.env` 缺失、端口冲突、磁盘满 |
 | `missing server host` | Secrets 写在 **Environment** 但 workflow 未写对应 **`environment:`**；或未配置 `DEPLOY_HOST` |
-| `Unexpected input … script_stop` | 使用了旧版不支持参数；已从 workflow 移除 |
+| `ssh.ParsePrivateKey: no key found` | `DEPLOY_SSH_KEY` 不是合法私钥 PEM（空值、只粘了公钥、缺头尾行、PuTTY 未转换、或私钥有密码却未配 **`DEPLOY_SSH_KEY_PASSPHRASE`**） |
+| `unable to authenticate` / `attempted methods [none]` | 私钥与服务端 `authorized_keys` 中**公钥不匹配**、或 `DEPLOY_USER` 不是该密钥所在用户、或服务器仅允许密码登录 |
 
 如需「仅打标签才部署」或「手动 workflow_dispatch」，可在 workflow 里加 `workflow_dispatch` 或 `release` 条件。
