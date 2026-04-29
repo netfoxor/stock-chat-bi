@@ -10,6 +10,9 @@ passlib[bcrypt]>=1.7
 bcrypt<4 # passlib 1.7.4 兼容区间
 httpx>=0.27
 
+# 离线/定时脚本（Tushare 拉日线，见 backend/fetch_stock_prices.py）
+tushare>=1.4
+
 # nanobot（作为后端进程内依赖运行）
 nanobot-ai>=0.1.5.post1
 pandas>=2.0
