@@ -67,34 +67,40 @@ python stock_bot.py
 
 ```
 nanobot/
-├── app_chainlit.py          # Chainlit 前端入口（工具 trace 折叠 / 图表 emit / 历史）
-├── chainlit_data.py         # Chainlit 聊天历史持久化（SQLite + SQLAlchemyDataLayer）
+├── app_chainlit.py          # Chainlit 入口（仅独立 Web UI 时使用；主站走 FastAPI 不需要）
+├── trace_ctx.py             # 执行轨迹上下文（FastAPI 流式 trace 依赖）
+├── trace_hook.py            # LLM 调用写入 trace_ctx
 ├── stock_bot.py             # nanobot AgentLoop 组装 + CLI 入口
-├── stock_core.py            # 底层：DB 路径 / 画图 / SQL 执行工具函数
+├── stock_core.py            # 底层：SQL 守卫 / 画图 / run_query 等（与 FastAPI 大屏共用）
 ├── self_heal_hook.py        # 工具失败时的自动重试 / 修复钩子
+├── chainlit_data.py         # Chainlit 聊天历史持久化（SQLite + SQLAlchemyDataLayer）
 ├── stock_tools/             # 常驻 in-process 工具（目前只有 exc_sql）
+│   ├── __init__.py
 │   └── exc_sql.py
-├── skills/                  # LLM 按需读取的技能包（SKILL.md + scripts/）
+├── skills/                  # LLM 按需读取的技能包（SKILL.md + scripts/exec）
 │   ├── arima-forecast/
 │   ├── bollinger/
-│   └── stock-sql/           # 表结构 / SQL 最佳实践（SQL 前必读）
-├── public/elements/         # Chainlit CustomElement（React/JSX）
-│   ├── EChart.jsx           # ECharts 图表（已与 Chainlit 主题联动）
-│   └── ToolTrace.jsx        # 工具调用 trace 折叠块
-├── charts/                  # 运行时生成的 echarts option JSON
-├── data/                    # SQLite 库（stock_prices_history.db）
-├── memory/                  # 会话记忆 + 聊天历史（chainlit.db）
-├── sessions/                # Chainlit 会话数据
-├── config.json              # 模型 / 上下文窗口 / 工具配置
+│   └── stock-sql/
+├── public/elements/         # Chainlit CustomElement（仅 `chainlit run app_chainlit.py` 需要）
+│   ├── EChart.jsx
+│   └── ToolTrace.jsx
+├── charts/                  # [运行时] 工具落地 `chart:charts/*.json`，可删、会再生成（见 .gitignore）
+├── data/                    # [可选] 未配置 MySQL 时 SQLite 数据目录（见 stock_core；通常线上用 DATABASE_URL）
+├── memory/                  # [运行时] `chainlit.db` 等；勿把运行中 jsonl 当源码（见 .gitignore）
+├── sessions/                # [运行时] 会话快照 *.jsonl，可删（见 .gitignore）
+├── .chainlit/config.toml    # Chainlit UI 配置；translations 等由 CLI 按需拉取，勿手改
+├── config.json
 ├── requirements.txt
-├── Dockerfile
+├── Dockerfile               # 独立打包「Chainlit + nanobot」；与 backend/Dockerfile（FastAPI）不同
 ├── docker-compose.yml
-├── .env.example              # 已废弃（占位）；实际以 backend/.env.example 为准
-├── AGENTS.md                # 给 LLM 读的系统规范（能力索引 + 输出纪律）
+├── chainlit.md
+├── AGENTS.md
 └── deploy/
-    ├── README.md            # 1Panel 离线部署完整步骤
-    └── build_and_save.ps1   # Windows 下构建并打包镜像 tar.gz
+    ├── README.md            # 1Panel 离线部署（Chainlit 镜像）
+    └── build_and_save.ps1
 ```
+
+> **说明**：上表中带 **\[运行时\]** 的目录不要当业务源码维护；仓库内不应长期保留 `*.jsonl`、落盘图表 JSON，避免与「真实代码」混淆。主站聊天走后端 `app/services/nanobot_service.py → stock_bot`，**不要求** Chainlit；需要独立 Web UI 时再使用 `app_chainlit.py`。
 
 ---
 
