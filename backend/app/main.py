@@ -5,10 +5,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.errors import ServerErrorMiddleware
 
 from app.core.config import settings
+from app.core.logging import setup_app_logging
 from app.routers import auth, chat, conversations, dashboard, health
 
 
 def create_app() -> FastAPI:
+    setup_app_logging()
+
     app = FastAPI(title="stock-chat-bi", version="0.1.0")
 
     # 确保即使发生 500，也能带上 CORS 头（否则浏览器会把真实错误“伪装成 CORS”）

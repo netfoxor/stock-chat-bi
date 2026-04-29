@@ -1,7 +1,8 @@
 import { Button, Card, Input, Modal, Segmented, Space, Typography } from "antd";
 import { SettingOutlined } from "@ant-design/icons";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import GridLayout, { Layout, WidthProvider } from "react-grid-layout";
+import { api } from "../../api/client";
 import { useDashboardStore } from "../../store/dashboardStore";
 import { InlineDataTable, InlineECharts } from "../chat/renderers";
 import { useElementSize } from "../../hooks/useElementSize";
@@ -10,6 +11,44 @@ import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
 
 const AutoWidthGridLayout = WidthProvider(GridLayout);
+
+type CronPreset = "off" | "1m" | "5m" | "15m" | "1h" | "custom";
+
+/** 解析「每 N 分钟 / 每小时」类 cron，得到秒数；不支持则返回 null */
+function cronToIntervalSeconds(cron: string): number | null {
+  const c = (cron ?? "").trim();
+  if (!c) return null;
+  const m1 = /^\*\/(\d+)\s+\*\s+\*\s+\*\s+\*$/.exec(c);
+  if (m1) return parseInt(m1[1], 10) * 60;
+  const m2 = /^0\s+\*\/(\d+)\s+\*\s+\*\s+\*$/.exec(c);
+  if (m2) return parseInt(m2[1], 10) * 3600;
+  return null;
+}
+
+function resolveIntervalSec(params: { cronPreset: CronPreset; cronVal: string; cronStr: string }): number {
+  if (params.cronPreset === "off") return 0;
+  const map: Record<string, number> = { "1m": 60, "5m": 300, "15m": 900, "1h": 3600 };
+  if (params.cronPreset !== "custom") return map[params.cronPreset] ?? 0;
+  return cronToIntervalSeconds(params.cronVal || params.cronStr) ?? 300;
+}
+
+function inferCronUiFromConfig(cfg: any): { preset: CronPreset; val: string } {
+  const cron = String(cfg?.poll?.cron ?? "").trim();
+  const sec = Number(cfg?.poll?.interval_sec);
+  if (!cron) {
+    if (sec === 60) return { preset: "1m", val: "" };
+    if (sec === 300) return { preset: "5m", val: "" };
+    if (sec === 900) return { preset: "15m", val: "" };
+    if (sec === 3600) return { preset: "1h", val: "" };
+    if (sec > 0) return { preset: "custom", val: `*/${Math.max(1, Math.round(sec / 60))} * * * *` };
+    return { preset: "off", val: "" };
+  }
+  if (cron === "*/1 * * * *") return { preset: "1m", val: "" };
+  if (cron === "*/5 * * * *") return { preset: "5m", val: "" };
+  if (cron === "*/15 * * * *") return { preset: "15m", val: "" };
+  if (cron === "0 * * * *") return { preset: "1h", val: "" };
+  return { preset: "custom", val: cron };
+}
 
 export function DashboardGrid() {
   const widgets = useDashboardStore((s) => s.widgets);
@@ -38,14 +77,13 @@ export function DashboardGrid() {
   const [configWidget, setConfigWidget] = useState<any>(null);
   const [configTab, setConfigTab] = useState<"sql" | "echarts" | "table" | "poll" | "raw">("sql");
   const [sqlVal, setSqlVal] = useState("");
-  const [cronPreset, setCronPreset] = useState<"off" | "1m" | "5m" | "15m" | "1h" | "custom">("off");
+  const [cronPreset, setCronPreset] = useState<CronPreset>("off");
   const [cronVal, setCronVal] = useState("");
   const [echartsJson, setEchartsJson] = useState("{}");
   const [tableJson, setTableJson] = useState("{}");
   const [rawJson, setRawJson] = useState<string>("{}");
 
   const onLayoutChange = (l: Layout[]) => {
-    // 轻量：直接发到后端（后端会按 i=widget_id 写回 layout JSON）
     updateLayoutBatch(l).catch(() => void 0);
   };
 
@@ -120,8 +158,9 @@ export function DashboardGrid() {
                       setConfigWidget(w);
                       setConfigTab("sql");
                       setSqlVal(String(cfg.sql ?? ""));
-                      setCronVal(String(cfg?.poll?.cron ?? ""));
-                      setCronPreset(cfg?.poll?.cron ? "custom" : "off");
+                      const ui = inferCronUiFromConfig(cfg);
+                      setCronPreset(ui.preset);
+                      setCronVal(ui.val);
                       setEchartsJson(JSON.stringify(cfg?.echarts ?? {}, null, 2));
                       setTableJson(JSON.stringify(cfg?.table ?? {}, null, 2));
                       setRawJson(JSON.stringify(cfg ?? {}, null, 2));
@@ -136,7 +175,7 @@ export function DashboardGrid() {
               bodyStyle={{ flex: 1, minHeight: 0, padding: 8, display: "flex", flexDirection: "column" }}
               style={{ height: "100%", display: "flex", flexDirection: "column" }}
             >
-              <WidgetBody widget={w} />
+              <WidgetBody key={`${w.id}-${String(w.updated_at ?? "")}`} widget={w} />
             </Card>
           </div>
         ))}
@@ -154,7 +193,7 @@ export function DashboardGrid() {
             const echartsObj = JSON.parse(echartsJson || "{}");
             const tableObj = JSON.parse(tableJson || "{}");
             const baseRaw = JSON.parse(rawJson || "{}");
-            const cron =
+            const cronStr =
               cronPreset === "off"
                 ? ""
                 : cronPreset === "1m"
@@ -167,12 +206,16 @@ export function DashboardGrid() {
                         ? "0 * * * *"
                         : cronVal;
 
+            const interval_sec = resolveIntervalSec({ cronPreset, cronVal, cronStr });
+
             const merged = {
               ...baseRaw,
               sql: sqlVal,
               echarts: echartsObj,
               table: tableObj,
-              poll: cron ? { ...(baseRaw.poll ?? {}), cron } : { ...(baseRaw.poll ?? {}), cron: "" },
+              poll: cronStr
+                ? { ...(baseRaw.poll ?? {}), cron: cronStr, interval_sec }
+                : { ...(baseRaw.poll ?? {}), cron: "", interval_sec: 0 },
             };
 
             await updateWidget(configWidget.id, { config: merged });
@@ -199,7 +242,7 @@ export function DashboardGrid() {
         {configTab === "sql" && (
           <>
             <Typography.Paragraph type="secondary" style={{ marginBottom: 8 }}>
-              写 SQL（MySQL 8）。这里先做配置保存，后续可接入后端执行与自动刷新。
+              填写只读 SELECT（MySQL）。保存后表格/图表会按轮询间隔调用「/dashboard/query」拉取最新数据；图表会由服务端按查询结果重算 ECharts。
             </Typography.Paragraph>
             <Input.TextArea rows={8} value={sqlVal} onChange={(e) => setSqlVal(e.target.value)} placeholder="SELECT ..." />
           </>
@@ -208,7 +251,7 @@ export function DashboardGrid() {
         {configTab === "echarts" && (
           <>
             <Typography.Paragraph type="secondary" style={{ marginBottom: 8 }}>
-              填写 ECharts option 的“覆盖项”（JSON）。
+              初次展示或轮询开启前可用作静态模板；启用轮询后以接口返回的 option 为准（与聊天里添加大屏时的图表逻辑一致）。
             </Typography.Paragraph>
             <Input.TextArea rows={10} value={echartsJson} onChange={(e) => setEchartsJson(e.target.value)} />
           </>
@@ -217,7 +260,7 @@ export function DashboardGrid() {
         {configTab === "table" && (
           <>
             <Typography.Paragraph type="secondary" style={{ marginBottom: 8 }}>
-              填写表格属性覆盖项（JSON），例如分页、列宽等（后续会逐步落地到渲染逻辑）。
+              Ant Design Table 覆盖项（列宽、分页等）；数据来自 SQL 刷新结果。
             </Typography.Paragraph>
             <Input.TextArea rows={10} value={tableJson} onChange={(e) => setTableJson(e.target.value)} />
           </>
@@ -226,12 +269,12 @@ export function DashboardGrid() {
         {configTab === "poll" && (
           <>
             <Typography.Paragraph type="secondary" style={{ marginBottom: 8 }}>
-              轮询 cron（分钟级）。先保存配置，执行逻辑后续接上。
+              选择刷新间隔（内部保存为 cron 与 interval_sec）。关闭则仅在进入大屏时加载一次。
             </Typography.Paragraph>
             <Space wrap>
               <Segmented
                 value={cronPreset}
-                onChange={(v) => setCronPreset(v as any)}
+                onChange={(v) => setCronPreset(v as CronPreset)}
                 options={[
                   { label: "关闭", value: "off" },
                   { label: "1分钟", value: "1m" },
@@ -247,7 +290,7 @@ export function DashboardGrid() {
                 style={{ marginTop: 12 }}
                 value={cronVal}
                 onChange={(e) => setCronVal(e.target.value)}
-                placeholder="例如：*/5 * * * *"
+                placeholder="例如：*/5 * * * *（每 5 分钟）"
               />
             )}
           </>
@@ -269,15 +312,56 @@ export function DashboardGrid() {
 function WidgetBody(props: { widget: any }) {
   const { ref, size } = useElementSize<HTMLDivElement>();
   const h = Math.max(0, size.height);
+  const cfg = props.widget.config ?? {};
+  const sql = String(cfg.sql ?? "").trim();
+  const intervalSec = Number(cfg?.poll?.interval_sec ?? 0) || 0;
+  const includeEcharts = props.widget.type === "chart";
+
+  const [tableVal, setTableVal] = useState<any>(() => cfg.table ?? props.widget.data ?? {});
+  const [echartsVal, setEchartsVal] = useState<any>(() => cfg.echarts ?? props.widget.data ?? {});
+
+  const refresh = useCallback(async () => {
+    if (!sql) return;
+    try {
+      const { data } = await api.post("/dashboard/query", {
+        sql,
+        widget_id: props.widget.id,
+        limit: 5000,
+        include_echarts: includeEcharts,
+      });
+      if (data?.table != null && typeof data.table === "object") {
+        setTableVal(data.table);
+      }
+      if (includeEcharts && data?.echarts && typeof data.echarts === "object") {
+        setEchartsVal(data.echarts);
+      }
+    } catch {
+      // 保留上一次成功数据
+    }
+  }, [sql, props.widget.id, includeEcharts]);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  useEffect(() => {
+    if (intervalSec <= 0 || !sql) return;
+    const id = window.setInterval(() => void refresh(), intervalSec * 1000);
+    return () => clearInterval(id);
+  }, [intervalSec, sql, refresh]);
+
+  const mergedTable = useMemo(
+    () => ({ ...(typeof cfg.table === "object" ? cfg.table : {}), ...tableVal }),
+    [cfg.table, tableVal],
+  );
 
   return (
     <div ref={ref} style={{ flex: 1, minHeight: 0, height: "100%" }}>
       {props.widget.type === "chart" ? (
-        <InlineECharts option={props.widget?.config?.echarts ?? props.widget.data} height={h || 260} />
+        <InlineECharts option={echartsVal} height={h || 260} />
       ) : (
-        <InlineDataTable value={props.widget?.config?.table ?? props.widget.data} height={h || 260} showTitle={false} />
+        <InlineDataTable value={mergedTable} height={h || 260} showTitle={false} />
       )}
     </div>
   );
 }
-

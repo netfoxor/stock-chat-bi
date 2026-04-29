@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,18 +12,86 @@ from app.core.database import get_db
 from app.models.dashboard import Dashboard
 from app.models.user import User
 from app.models.widget import DashboardWidget
+from app.core.config import settings
 from app.schemas.dashboard import (
     DashboardCreateRequest,
     DashboardItem,
     DashboardUpdateRequest,
     LayoutUpdateRequest,
+    SqlQueryRequest,
+    SqlQueryResponse,
     WidgetCreateRequest,
     WidgetItem,
     WidgetUpdateRequest,
 )
+from app.services.dashboard_query import run_dashboard_query
 
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
+
+
+@router.post("/query", response_model=SqlQueryResponse)
+async def dashboard_sql_query(
+    payload: SqlQueryRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    登录用户执行只读 SELECT，返回表格数据；`include_echarts=true` 时附带 `stock_core.build_stock_echart`
+    生成的 option（供图表组件刷新）。
+    """
+    sql = payload.sql.strip()
+    if payload.widget_id is not None:
+        res = await db.execute(
+            select(DashboardWidget).where(
+                DashboardWidget.id == payload.widget_id,
+                DashboardWidget.user_id == user.id,
+            )
+        )
+        w = res.scalar_one_or_none()
+        if w is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Widget not found")
+        if not sql:
+            cfg = w.config or {}
+            sql = str(cfg.get("sql") or "").strip()
+
+    if not sql:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="请填写 sql，或提供 widget_id 以使用组件内已保存的 SQL",
+        )
+
+    try:
+        return await asyncio.to_thread(
+            run_dashboard_query,
+            sql=sql,
+            limit=payload.limit,
+            include_echarts=payload.include_echarts,
+            database_url=settings.database_url,
+        )
+    except ValueError as e:
+        logger.warning(
+            "POST /dashboard/query 参数/校验失败 user_id=%s widget_id=%s detail=%s sql_preview=%r",
+            user.id,
+            payload.widget_id,
+            e,
+            (sql[:400] + "…") if len(sql) > 400 else sql,
+        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    except Exception:
+        logger.exception(
+            "POST /dashboard/query 未处理异常 user_id=%s widget_id=%s include_echarts=%s sql_preview=%r",
+            user.id,
+            payload.widget_id,
+            payload.include_echarts,
+            (sql[:400] + "…") if len(sql) > 400 else sql,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="查询失败，请稍后重试或服务端日志中查看详情",
+        ) from None
+
 
 @router.get("/dashboards", response_model=list[DashboardItem])
 async def list_dashboards(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):

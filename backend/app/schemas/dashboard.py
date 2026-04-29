@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class WidgetCreateRequest(BaseModel):
@@ -53,4 +53,19 @@ class DashboardItem(BaseModel):
 
 class LayoutUpdateRequest(BaseModel):
     layout: list[dict[str, Any]]
+
+
+class SqlQueryRequest(BaseModel):
+    """执行大屏 SELECT；可直接传 sql，或仅靠 widget_id 使用组件配置中的 sql。"""
+
+    sql: str = ""
+    widget_id: int | None = None
+    limit: int = Field(default=3000, ge=1, le=10000)
+    include_echarts: bool = False
+
+
+class SqlQueryResponse(BaseModel):
+    table: dict[str, Any]
+    echarts: dict[str, Any] | None = None
+    echarts_label: str | None = None
 

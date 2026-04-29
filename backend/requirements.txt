@@ -4,6 +4,7 @@ pydantic>=2.7
 pydantic-settings>=2.2
 SQLAlchemy>=2.0
 aiomysql>=0.2
+pymysql>=1.1
 python-jose[cryptography]>=3.3
 passlib[bcrypt]>=1.7
 bcrypt<4 # passlib 1.7.4 兼容区间
