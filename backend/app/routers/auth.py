@@ -19,7 +19,7 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 async def register(payload: RegisterRequest, db: AsyncSession = Depends(get_db)):
     res = await db.execute(select(User).where(User.username == payload.username))
     if res.scalar_one_or_none() is not None:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Username already exists")
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="该用户名已被注册")
 
     user = User(username=payload.username, password=hash_password(payload.password))
     db.add(user)
@@ -36,7 +36,7 @@ async def login(payload: LoginRequest, db: AsyncSession = Depends(get_db)):
     res = await db.execute(select(User).where(User.username == payload.username))
     user = res.scalar_one_or_none()
     if user is None or not verify_password(payload.password, user.password):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid username or password")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="用户名或密码错误")
     token = create_access_token(subject=user.username)
     return TokenResponse(access_token=token)
 
