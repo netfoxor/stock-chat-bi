@@ -4,7 +4,7 @@ import asyncio
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user
@@ -141,6 +141,16 @@ async def rename_dashboard(
 
 @router.delete("/dashboards/{dashboard_id}", status_code=204)
 async def delete_dashboard(dashboard_id: int, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    res_cnt = await db.execute(
+        select(func.count()).select_from(Dashboard).where(Dashboard.user_id == user.id),
+    )
+    total = int(res_cnt.scalar_one())
+    if total <= 1:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="至少需要保留一个大屏，无法删除最后一个",
+        )
+
     res = await db.execute(select(Dashboard).where(Dashboard.id == dashboard_id, Dashboard.user_id == user.id))
     d = res.scalar_one_or_none()
     if d is None:

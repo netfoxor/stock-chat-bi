@@ -6,7 +6,7 @@ import { useAuthStore } from "../store/authStore";
 
 type AuthResp = { access_token: string; token_type: string };
 
-export function LoginPage() {
+export function RegisterPage() {
   const token = useAuthStore((s) => s.token);
   const setToken = useAuthStore((s) => s.setToken);
   const navigate = useNavigate();
@@ -15,8 +15,13 @@ export function LoginPage() {
     return <Navigate to="/" replace />;
   }
 
-  const onLogin = async (values: any) => {
-    const res = await api.post<AuthResp>("/auth/login", values);
+  const onRegister = async (values: { username: string; password: string }) => {
+    await api.post("/auth/register", values);
+    message.success("注册成功，正在登录…");
+    const res = await api.post<AuthResp>("/auth/login", {
+      username: values.username,
+      password: values.password,
+    });
     setToken(res.data.access_token);
     message.success("登录成功");
     navigate("/", { replace: true });
@@ -31,29 +36,29 @@ export function LoginPage() {
               {APP_DISPLAY_NAME}
             </Typography.Title>
             <Typography.Title level={4} type="secondary" style={{ margin: 0, fontWeight: 500 }}>
-              登录
+              注册账号
             </Typography.Title>
             <Typography.Text type="secondary" style={{ display: "block", marginTop: 8 }}>
-              登录后进入数据大屏与智能分析对话
+              创建账号后将自动登录并进入系统
             </Typography.Text>
           </div>
 
-          <Form layout="vertical" onFinish={onLogin}>
-            <Form.Item name="username" label="用户名" rules={[{ required: true }]}>
+          <Form layout="vertical" onFinish={onRegister}>
+            <Form.Item name="username" label="用户名" rules={[{ required: true, min: 3 }]}>
               <Input autoComplete="username" />
             </Form.Item>
-            <Form.Item name="password" label="密码" rules={[{ required: true }]}>
-              <Input.Password autoComplete="current-password" />
+            <Form.Item name="password" label="密码" rules={[{ required: true, min: 6 }]}>
+              <Input.Password autoComplete="new-password" />
             </Form.Item>
             <Button type="primary" htmlType="submit" block>
-              登录
+              注册
             </Button>
           </Form>
 
           <Typography.Text type="secondary">
-            没有账号？{" "}
-            <Link to="/register">
-              <Typography.Link style={{ cursor: "pointer" }}>去注册</Typography.Link>
+            已有账号？{" "}
+            <Link to="/login">
+              <Typography.Link style={{ cursor: "pointer" }}>去登录</Typography.Link>
             </Link>
           </Typography.Text>
         </Space>

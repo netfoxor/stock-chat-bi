@@ -3,6 +3,7 @@ import zhCN from "antd/locale/zh_CN";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { useAuthStore } from "../store/authStore";
 import { LoginPage } from "../views/LoginPage";
+import { RegisterPage } from "../views/RegisterPage";
 import { DashboardPage } from "../views/DashboardPage";
 
 export function App() {
@@ -13,6 +14,7 @@ export function App() {
       <Layout style={{ minHeight: "100vh" }}>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
+          <Route path="/register" element={<RegisterPage />} />
           <Route path="/" element={token ? <DashboardPage /> : <Navigate to="/login" replace />} />
         </Routes>
       </Layout>

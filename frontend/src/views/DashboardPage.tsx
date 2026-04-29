@@ -1,5 +1,6 @@
-import { Button, Input, Layout, Modal, Select, Space, Typography, message } from "antd";
+import { Button, ConfigProvider, Input, Layout, Modal, Select, Space, Tooltip, Typography, message } from "antd";
 import { useEffect, useMemo, useState } from "react";
+import { APP_DISPLAY_NAME } from "../constants/branding";
 import { useAuthStore } from "../store/authStore";
 import { ChatWindow } from "../widgets/chat/ChatWindow";
 import { DashboardGrid } from "../widgets/dashboard/DashboardGrid";
@@ -21,6 +22,20 @@ export function DashboardPage() {
 
   const activeName = useMemo(() => dashboards.find((d) => d.id === activeDashboardId)?.name ?? "", [dashboards, activeDashboardId]);
 
+  const onlyOneDashboard = dashboards.length <= 1;
+  const deleteDisabled = !activeDashboardId || onlyOneDashboard;
+
+  const headerButtonDisabledTheme = {
+    components: {
+      Button: {
+        colorTextDisabled: "rgba(255, 255, 255, 0.72)",
+        colorBgContainerDisabled: "rgba(255, 255, 255, 0.12)",
+        borderColorDisabled: "rgba(255, 255, 255, 0.38)",
+        opacityDisabled: 1,
+      },
+    },
+  } as const;
+
   useEffect(() => {
     fetchDashboards()
       .then(() => fetchWidgets())
@@ -34,56 +49,88 @@ export function DashboardPage() {
   return (
     <Layout style={{ height: "100vh" }}>
       <Layout.Header style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <Space>
-          <Typography.Text style={{ color: "white" }} strong>
-            Stock Chat BI
-          </Typography.Text>
-          <Select
-            value={activeDashboardId ?? undefined}
-            style={{ width: 220 }}
-            placeholder="选择大屏"
-            options={dashboards.map((d) => ({ value: d.id, label: d.name }))}
-            onChange={(v) => setActiveDashboardId(v)}
-          />
-          <Button
-            size="small"
-            onClick={() => {
-              createDashboard("新大屏").catch((e) => message.error(String(e)));
-            }}
-          >
-            新建大屏
-          </Button>
-          <Button
-            size="small"
-            disabled={!activeDashboardId}
-            onClick={() => {
-              setRenameVal(activeName);
-              setRenameOpen(true);
-            }}
-          >
-            重命名
-          </Button>
-          <Button
-            size="small"
-            danger
-            disabled={!activeDashboardId}
-            onClick={() => {
-              Modal.confirm({
-                title: "删除大屏？",
-                content: "删除后该大屏下的组件也会一起删除，且无法恢复。",
-                okText: "删除",
-                okButtonProps: { danger: true },
-                cancelText: "取消",
-                onOk: async () => {
-                  if (!activeDashboardId) return;
-                  await deleteDashboard(activeDashboardId);
-                },
-              });
-            }}
-          >
-            删除大屏
-          </Button>
-        </Space>
+        <ConfigProvider theme={headerButtonDisabledTheme}>
+          <Space align="center">
+            <Typography.Title
+              level={4}
+              style={{ color: "#fff", margin: 0, fontWeight: 700, letterSpacing: 0.5 }}
+            >
+              {APP_DISPLAY_NAME}
+            </Typography.Title>
+            <Select
+              value={activeDashboardId ?? undefined}
+              style={{ width: 220 }}
+              placeholder="选择大屏"
+              options={dashboards.map((d) => ({ value: d.id, label: d.name }))}
+              onChange={(v) => setActiveDashboardId(v)}
+            />
+            <Button
+              size="small"
+              onClick={() => {
+                createDashboard("新大屏").catch((e) => message.error(String(e)));
+              }}
+            >
+              新建大屏
+            </Button>
+            <Button
+              size="small"
+              disabled={!activeDashboardId}
+              onClick={() => {
+                setRenameVal(activeName);
+                setRenameOpen(true);
+              }}
+            >
+              重命名
+            </Button>
+            <Tooltip title={onlyOneDashboard ? "至少需要保留一个大屏" : undefined}>
+              <span style={{ display: "inline-block" }}>
+                <Button
+                  size="small"
+                  danger={!deleteDisabled}
+                  disabled={deleteDisabled}
+                  onClick={() => {
+                    Modal.confirm({
+                      title: "删除大屏？",
+                      content: "删除后该大屏下的组件也会一起删除，且无法恢复。",
+                      okText: "删除",
+                      okButtonProps: { danger: true },
+                      cancelText: "取消",
+                      onOk: async () => {
+                        if (!activeDashboardId) return;
+                        try {
+                          await deleteDashboard(activeDashboardId);
+                        } catch (e: unknown) {
+                          const ax = e as { response?: { data?: { detail?: unknown } } };
+                          const d = ax.response?.data?.detail;
+                          const txt =
+                            typeof d === "string"
+                              ? d
+                              : Array.isArray(d)
+                                ? String(d.map((x) => (typeof x === "object" ? JSON.stringify(x) : x)).join("; "))
+                                : undefined;
+                          message.error(txt ?? String(e));
+                          throw e;
+                        }
+                      },
+                    });
+                  }}
+                  styles={{
+                    root: deleteDisabled
+                      ? {
+                          opacity: 1,
+                          color: "rgba(255, 255, 255, 0.72)",
+                          borderColor: "rgba(255, 255, 255, 0.38)",
+                          background: "rgba(255, 255, 255, 0.1)",
+                        }
+                      : undefined,
+                  }}
+                >
+                  删除大屏
+                </Button>
+              </span>
+            </Tooltip>
+          </Space>
+        </ConfigProvider>
         <Button
           onClick={() => {
             logout();
