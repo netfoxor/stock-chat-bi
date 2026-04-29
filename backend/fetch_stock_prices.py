@@ -18,6 +18,7 @@
 环境变量（可写在 backend/.env）：
   DATABASE_URL    必填（mysql+aiomysql://...）
   TUSHARE_TOKEN   必填（Tushare Pro token）
+  （股票列表可先运行 backend/fetch_stock_codes.py）
   TUSHARE_REQUEST_INTERVAL    默认 1.5
   CUTOFF_HOUR                 默认 17
   LOG_LEVEL / LOG_DIR / LOG_PROGRESS_EVERY
@@ -368,7 +369,7 @@ def main() -> None:
     stocks_df = load_stocks_ordered(engine)
     if stocks_df.empty:
         logging.error(
-            "stock_code_list 无数据，请先运行 fetch-data/fetch_stock_codes.py",
+            "stock_code_list 无数据，请先运行 python fetch_stock_codes.py（在 backend 目录）",
         )
         sys.exit(1)
 
