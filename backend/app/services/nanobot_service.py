@@ -56,7 +56,9 @@ async def ask(question: str, session_key: str, *, trace_sink: Any | None = None)
     import trace_ctx  # type: ignore
 
     trace_ctx.start_trace(sink=trace_sink)
-    result = await bot.run(question, session_key=session_key, hooks=[SelfHealHook()])
+    from trace_hook import TraceHook  # type: ignore
+
+    result = await bot.run(question, session_key=session_key, hooks=[TraceHook(), SelfHealHook()])
     content = (result.content or "").strip()
     trace = trace_ctx.get_trace()
     return content, trace
@@ -70,7 +72,9 @@ async def ask_sync_bridge(question: str, session_key: str) -> str:
     """
     try:
         asyncio.get_running_loop()
-        return await ask(question, session_key)
+        content, _trace = await ask(question, session_key)
+        return content
     except RuntimeError:
-        return asyncio.run(ask(question, session_key))
+        content, _trace = asyncio.run(ask(question, session_key))
+        return content
 

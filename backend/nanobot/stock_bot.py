@@ -86,7 +86,8 @@ def build_bot() -> Nanobot:
         config.agents.defaults.provider = "openai"
         # nanobot-ai 若支持 openai provider，则这里会生效；否则会在 _make_provider 时报错，便于定位。
         config.providers.openai.api_key = openai_key
-        config.providers.openai.base_url = openai_base_url
+        # nanobot ProviderConfig 字段为 api_base（OpenAI 兼容网关，如阿里 Coding Plan）
+        config.providers.openai.api_base = openai_base_url
         if model_override := os.environ.get("OPENAI_MODEL", "").strip():
             config.agents.defaults.model = model_override
     else:

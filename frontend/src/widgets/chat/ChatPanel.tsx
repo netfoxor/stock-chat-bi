@@ -16,6 +16,8 @@ export function ChatPanel() {
   const setMessages = useChatStore((s) => s.setMessages);
   const appendMessage = useChatStore((s) => s.appendMessage);
   const upsertStreamingAssistant = useChatStore((s) => s.upsertStreamingAssistant);
+  const upsertStreamingTrace = useChatStore((s) => s.upsertStreamingTrace);
+  const applyFinalTrace = useChatStore((s) => s.applyFinalTrace);
   const clearStreaming = useChatStore((s) => s.clearStreaming);
 
   const [loadingConvs, setLoadingConvs] = useState(false);
@@ -75,10 +77,16 @@ export function ChatPanel() {
       "/chat/stream",
       { conversation_id: activeConversationId, message: text },
       (evt) => {
+        if (evt.type === "trace") {
+          upsertStreamingTrace(evt.event);
+        }
         if (evt.type === "delta") {
           upsertStreamingAssistant(evt.content);
         }
         if (evt.type === "done") {
+          if (Array.isArray(evt.trace)) {
+            applyFinalTrace(evt.trace);
+          }
           loadMessages(activeConversationId).catch(() => void 0);
         }
       },

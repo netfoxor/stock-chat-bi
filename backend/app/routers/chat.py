@@ -288,7 +288,8 @@ async def chat_stream(
         db.add(assistant_msg)
         await db.commit()
 
-        yield _sse(json.dumps({"type": "done"}, ensure_ascii=False)).encode("utf-8")
+        # 流式期间可能漏合并某条 trace SSE，done 时附带完整 trace 校正前端 Timeline
+        yield _sse(json.dumps({"type": "done", "trace": trace}, ensure_ascii=False)).encode("utf-8")
 
     return StreamingResponse(gen(), media_type="text/event-stream")
 

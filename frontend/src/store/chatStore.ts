@@ -33,6 +33,8 @@ type ChatState = {
   appendMessage: (m: Message) => void;
   upsertStreamingAssistant: (delta: string) => void;
   upsertStreamingTrace: (ev: any) => void;
+  /** 流结束时用服务端完整 trace 覆盖（修正漏合并的「调用中」等） */
+  applyFinalTrace: (trace: any[]) => void;
   clearStreaming: () => void;
 };
 
@@ -83,11 +85,37 @@ export const useChatStore = create<ChatState>((set, get) => ({
     } else {
       const extra = (last.extra ??= {});
       const trace = (extra.trace ??= []);
-      const spanId = ev?.meta?.span_id;
-      if (spanId) {
-        const idx = trace.findIndex((x: any) => x?.meta?.span_id === spanId);
+      const rowKeyFor = (row: any): string | null => {
+        const tk = row?.meta?.trace_key;
+        if (typeof tk === "string" && tk.length > 0) return tk;
+        const sid = row?.meta?.span_id;
+        if (sid != null && String(sid).length > 0) return `__span:${String(sid)}`;
+        return null;
+      };
+      const evKey = rowKeyFor(ev);
+      const evSpan = ev?.meta?.span_id != null ? String(ev.meta.span_id) : null;
+      if (evKey || evSpan) {
+        const idx = trace.findIndex((x: any) => {
+          const xk = rowKeyFor(x);
+          if (evKey && xk && evKey === xk) return true;
+          if (evSpan != null && x?.meta?.span_id != null && String(x.meta.span_id) === evSpan) return true;
+          return false;
+        });
         if (idx >= 0) {
-          trace[idx] = { ...trace[idx], ...ev, meta: { ...(trace[idx]?.meta ?? {}), ...(ev?.meta ?? {}) } };
+          const prev = trace[idx];
+          const mergedMeta = { ...(prev?.meta ?? {}), ...(ev?.meta ?? {}) };
+          const endAt = ev.ended_at ?? prev?.ended_at;
+          if (endAt != null && String(endAt).length > 0) mergedMeta.phase = "end";
+
+          trace[idx] = {
+            ...prev,
+            ...ev,
+            started_at: ev.started_at ?? prev.started_at,
+            ended_at: ev.ended_at ?? prev.ended_at,
+            input: ev.input !== undefined && ev.input !== null ? ev.input : prev.input,
+            output: ev.output !== undefined && ev.output !== null ? ev.output : prev.output,
+            meta: mergedMeta,
+          };
         } else {
           trace.push(ev);
         }
@@ -95,6 +123,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
         trace.push(ev);
       }
     }
+    set({ messages: msgs });
+  },
+
+  applyFinalTrace: (incoming) => {
+    if (!Array.isArray(incoming)) return;
+    const msgs = [...get().messages];
+    const last = msgs[msgs.length - 1];
+    if (!last || last.role !== "assistant" || last.id !== -1) return;
+    last.extra = { ...(last.extra ?? {}), trace: [...incoming] };
     set({ messages: msgs });
   },
 

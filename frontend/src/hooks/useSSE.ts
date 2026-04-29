@@ -6,7 +6,7 @@ type SSEEvent =
   | { type: "status"; message: string }
   | { type: "delta"; content: string }
   | { type: "trace"; event: any }
-  | { type: "done" };
+  | { type: "done"; trace?: any[] };
 
 export function useSSE() {
   const abortRef = useRef<AbortController | null>(null);

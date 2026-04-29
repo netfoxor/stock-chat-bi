@@ -67,16 +67,33 @@ class ExcSQLTool(Tool):
             return "错误：仅允许 SELECT 或 WITH ... SELECT 查询。"
 
         span_id = uuid.uuid4().hex
+        trace_key = f"tool:{span_id}"
         started_at = trace_ctx._now_iso()  # type: ignore[attr-defined]
-        trace_ctx.add_event(kind="skill", name="stock-sql", input=None, output=None, started_at=started_at, meta={"span_id": span_id})
         trace_ctx.add_event(
             kind="tool",
             name="exc_sql",
             input={"sql_input": sql_input},
             output=None,
             started_at=started_at,
-            meta={"span_id": span_id, "phase": "start"},
+            meta={"span_id": span_id, "trace_key": trace_key, "phase": "start"},
         )
+
+        def _stock_sql_trace(*, ok: bool, detail: dict[str, Any]) -> None:
+            """与 exc_sql 分开 span：避免与 tool 共用 span_id 导致前端合并错乱、状态一直停在调用中。"""
+            sid = uuid.uuid4().hex
+            trace_ctx.add_event(
+                kind="skill",
+                name="stock-sql",
+                input={
+                    "skill_path": "skills/stock-sql/SKILL.md",
+                    "sql": sql_input,
+                    "note": "表结构 / 日期格式 / SELECT 列约定见该 Skill（Agent 通常在调用 exc_sql 前已 read_file）",
+                },
+                output=detail,
+                started_at=started_at,
+                ended_at=trace_ctx._now_iso(),  # type: ignore[attr-defined]
+                meta={"span_id": sid, "trace_key": f"skill:{sid}", "phase": "end", "status": "ok" if ok else "error"},
+            )
 
         # 预检：LLM 常犯错——把 trade_date 当成 Tushare 的 yyyymmdd 格式
         if issue := _check_sql_pitfalls(sql_input):
@@ -87,8 +104,9 @@ class ExcSQLTool(Tool):
                 output=issue,
                 started_at=started_at,
                 ended_at=trace_ctx._now_iso(),  # type: ignore[attr-defined]
-                meta={"span_id": span_id, "phase": "end", "status": "error"},
+                meta={"span_id": span_id, "trace_key": trace_key, "phase": "end", "status": "error"},
             )
+            _stock_sql_trace(ok=False, detail={"stage": "sql_preflight", "result": "未执行到数据库"})
             return issue
 
         try:
@@ -102,8 +120,9 @@ class ExcSQLTool(Tool):
                 output=out,
                 started_at=started_at,
                 ended_at=trace_ctx._now_iso(),  # type: ignore[attr-defined]
-                meta={"span_id": span_id, "phase": "end", "status": "error"},
+                meta={"span_id": span_id, "trace_key": trace_key, "phase": "end", "status": "error"},
             )
+            _stock_sql_trace(ok=False, detail={"stage": "execute", "error": str(e)})
             return out
 
         if df.empty:
@@ -113,11 +132,12 @@ class ExcSQLTool(Tool):
                 kind="tool",
                 name="exc_sql",
                 input={"sql_input": sql_input},
-                output=out,
+                output={"diagnosis": out},
                 started_at=started_at,
                 ended_at=trace_ctx._now_iso(),  # type: ignore[attr-defined]
-                meta={"span_id": span_id, "phase": "end", "status": "ok", "rows": 0},
+                meta={"span_id": span_id, "trace_key": trace_key, "phase": "end", "status": "ok", "rows": 0},
             )
+            _stock_sql_trace(ok=True, detail={"stage": "empty_result", "rows": 0, "diagnosis_preview": out[:800]})
             return out
 
         sql_block = _build_sql_block(sql_input)
@@ -129,10 +149,18 @@ class ExcSQLTool(Tool):
                 kind="tool",
                 name="exc_sql",
                 input={"sql_input": sql_input},
-                output={"rows": int(df.shape[0]), "cols": int(df.shape[1])},
+                output={
+                    "rows": int(df.shape[0]),
+                    "cols": int(df.shape[1]),
+                    "response_preview": out[:2500],
+                },
                 started_at=started_at,
                 ended_at=trace_ctx._now_iso(),  # type: ignore[attr-defined]
-                meta={"span_id": span_id, "phase": "end", "status": "ok", "rows": int(df.shape[0]), "cols": int(df.shape[1])},
+                meta={"span_id": span_id, "trace_key": trace_key, "phase": "end", "status": "ok", "rows": int(df.shape[0]), "cols": int(df.shape[1])},
+            )
+            _stock_sql_trace(
+                ok=True,
+                detail={"stage": "result_no_chart", "rows": int(df.shape[0]), "cols": int(df.shape[1])},
             )
             return out
 
@@ -144,11 +172,12 @@ class ExcSQLTool(Tool):
                 kind="tool",
                 name="exc_sql",
                 input={"sql_input": sql_input},
-                output={"plot_error": str(e)},
+                output={"plot_error": str(e), "response_preview": out[:2500]},
                 started_at=started_at,
                 ended_at=trace_ctx._now_iso(),  # type: ignore[attr-defined]
-                meta={"span_id": span_id, "phase": "end", "status": "error"},
+                meta={"span_id": span_id, "trace_key": trace_key, "phase": "end", "status": "error"},
             )
+            _stock_sql_trace(ok=False, detail={"stage": "plot", "rows": int(df.shape[0]), "error": str(e)})
             return out
 
         echarts_block = _build_echarts_block(option)
@@ -158,10 +187,19 @@ class ExcSQLTool(Tool):
             kind="tool",
             name="exc_sql",
             input={"sql_input": sql_input},
-            output={"rows": int(df.shape[0]), "cols": int(df.shape[1]), "has_echarts": True},
+            output={
+                "rows": int(df.shape[0]),
+                "cols": int(df.shape[1]),
+                "has_echarts": True,
+                "response_preview": out[:2500],
+            },
             started_at=started_at,
             ended_at=trace_ctx._now_iso(),  # type: ignore[attr-defined]
-            meta={"span_id": span_id, "phase": "end", "status": "ok", "rows": int(df.shape[0])},
+            meta={"span_id": span_id, "trace_key": trace_key, "phase": "end", "status": "ok", "rows": int(df.shape[0])},
+        )
+        _stock_sql_trace(
+            ok=True,
+            detail={"stage": "success", "rows": int(df.shape[0]), "cols": int(df.shape[1]), "has_echarts": True},
         )
         return out
 
@@ -208,8 +246,14 @@ def _build_datatable_block(df, *, max_rows: int = 200) -> str:
       {"columns":[{"title":"","dataIndex":""}], "data":[{...}]}
     为避免消息过大，最多输出 max_rows 行（默认 200）。
     """
+    from datetime import date, datetime
     cols = [{"title": str(c), "dataIndex": str(c)} for c in df.columns.tolist()]
     data = df.to_dict(orient="records")
+    # 将 date/datetime 对象转为字符串，避免 JSON 序列化失败
+    for row in data:
+        for k, v in row.items():
+            if isinstance(v, (date, datetime)):
+                row[k] = v.isoformat() if hasattr(v, "isoformat") else str(v)
     truncated = False
     if len(data) > max_rows:
         data = data[:max_rows]

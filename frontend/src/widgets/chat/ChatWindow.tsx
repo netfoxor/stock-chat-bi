@@ -18,6 +18,7 @@ export function ChatWindow() {
   const appendMessage = useChatStore((s) => s.appendMessage);
   const upsertStreamingAssistant = useChatStore((s) => s.upsertStreamingAssistant);
   const upsertStreamingTrace = useChatStore((s) => s.upsertStreamingTrace);
+  const applyFinalTrace = useChatStore((s) => s.applyFinalTrace);
   const clearStreaming = useChatStore((s) => s.clearStreaming);
 
   const [loadingConvs, setLoadingConvs] = useState(false);
@@ -128,6 +129,8 @@ export function ChatWindow() {
           upsertStreamingAssistant(evt.content);
         }
         if (evt.type === "done") {
+          const d = evt as { trace?: unknown };
+          if (Array.isArray(d.trace)) applyFinalTrace(d.trace);
           loadMessages(activeConversationId).catch(() => void 0);
         }
       },
