@@ -9,7 +9,6 @@ images_show/
 
 # 本地数据库 / 离线镜像产物（仓库不携带二进制）
 data/
-deploy/dist/
 
 # 环境变量
 .env
@@ -20,3 +19,4 @@ deploy/dist/
 
 node_modules/
 .venv/
+dist/

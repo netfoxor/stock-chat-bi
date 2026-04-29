@@ -20,6 +20,8 @@ export type Widget = {
   data: any;
   layout: any;
   config?: any;
+  /** 后端可选返回，用于强刷子组件 key */
+  updated_at?: string | null;
 };
 
 type DashboardState = {

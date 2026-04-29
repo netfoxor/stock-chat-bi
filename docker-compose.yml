@@ -1,41 +1,30 @@
-services:
-  mysql:
-    image: mysql:8.0
-    environment:
-      MYSQL_ROOT_PASSWORD: root
-      MYSQL_DATABASE: stock_analysis
-      TZ: Asia/Shanghai
-    ports:
-      - "3306:3306"
-    volumes:
-      - mysql_data:/var/lib/mysql
-      - ./backend/sql/init.sql:/docker-entrypoint-initdb.d/00_init.sql:ro
+# 默认：**外置 MySQL**（1Panel / 宿主已装库）。数据库连接写在 `backend/.env` 的 `DATABASE_URL`。
+# 仍需一键带 MySQL 容器时：`docker compose -f docker-compose-with-mysql.yml up`
+#
+# Docker 后端访问宿主上的 MySQL：`DATABASE_URL` 主机可用 host.docker.internal（下方 extra_hosts）。
+# MySQL 需监听宿主机可被容器访问的地址（若仅监听 127.0.0.1，请调整 bind-address 或使用网络可达端口）。
 
+services:
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
+    env_file:
+      - ./backend/.env
     environment:
-      DATABASE_URL: mysql+aiomysql://root:root@mysql:3306/stock_analysis?charset=utf8mb4
-      JWT_SECRET: please-change-me
-      CORS_ALLOW_ORIGINS: http://localhost:5173,http://localhost:3000
       TZ: Asia/Shanghai
     ports:
       - "8000:8000"
-    depends_on:
-      - mysql
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-    environment:
-      VITE_API_BASE_URL: http://localhost:8000/api
+      args:
+        VITE_API_BASE_URL: /api
     ports:
-      - "5173:5173"
+      - "5173:80"
     depends_on:
       - backend
-
-volumes:
-  mysql_data:
-

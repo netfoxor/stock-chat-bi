@@ -1,0 +1,51 @@
+# 推送 master → SSH 到 ECS，在 DEPLOY_APP_DIR 下 git sync 后 docker compose 更新。
+# Secrets: DEPLOY_HOST, DEPLOY_USER, DEPLOY_SSH_KEY, DEPLOY_APP_DIR
+# 可选: DEPLOY_PORT, DEPLOY_COMPOSE_FILES（例: -f docker-compose.yml -f docker-compose.prod.yml，不配则用默认）
+
+name: Deploy to ECS
+
+on:
+  push:
+    branches:
+      - master
+
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-ecs
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.2.2
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: ${{ secrets.DEPLOY_PORT }}
+          command_timeout: 20m
+          script_stop: true
+          script: |
+            set -euo pipefail
+            cd "${{ secrets.DEPLOY_APP_DIR }}"
+
+            git config --global --add safe.directory "$(pwd)" || true
+
+            git fetch origin master
+            git reset --hard origin/master
+
+            CF='${{ secrets.DEPLOY_COMPOSE_FILES }}'
+            if [ -z "$CF" ]; then
+              docker compose build --parallel
+              docker compose up -d --remove-orphans
+            else
+              # shellcheck disable=SC2086
+              docker compose $CF build --parallel
+              # shellcheck disable=SC2086
+              docker compose $CF up -d --remove-orphans
+            fi
+
+            if [ -z "$CF" ]; then docker compose ps; else docker compose $CF ps; fi

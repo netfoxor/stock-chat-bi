@@ -1,5 +1,5 @@
 -- MySQL init script: business tables + stock tables
--- Database should exist (or set MYSQL_DATABASE=stock_analysis in docker-compose).
+-- Database should exist (or set MYSQL_DATABASE=stock in docker-compose).
 
 SET NAMES utf8mb4;
 SET FOREIGN_KEY_CHECKS = 0;

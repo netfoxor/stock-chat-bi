@@ -1,0 +1,43 @@
+# 自带 MySQL 容器；若在宿主/1Panel 已有数据库，优先用仓库根目录的 docker-compose.yml
+services:
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: stock
+      TZ: Asia/Shanghai
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./backend/sql/init.sql:/docker-entrypoint-initdb.d/00_init.sql:ro
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    # 运行时变量见 backend/.env（由 backend/.env.example 复制）；勿提交密钥到 Git
+    env_file:
+      - ./backend/.env
+    environment:
+      TZ: Asia/Shanghai
+    ports:
+      - "8000:8000"
+    depends_on:
+      - mysql
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: /api
+    # 容器内 Nginx 仍为 80；宿主机用 5173，避免与整机/1Panel 抢占 80，由 1Panel 再反代到本端口
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+
+volumes:
+  mysql_data:
+

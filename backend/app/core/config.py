@@ -14,7 +14,7 @@ class Settings(BaseSettings):
 
     # Database (MySQL)
     database_url: str = Field(
-        default="mysql+aiomysql://root:root@localhost:3306/stock_analysis?charset=utf8mb4",
+        default="mysql+aiomysql://root:root@localhost:3306/stock?charset=utf8mb4",
         alias="DATABASE_URL",
     )
 

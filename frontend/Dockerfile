@@ -1,19 +1,26 @@
-FROM node:20-slim
+# 生产镜像：静态资源 + Nginx，将 /api/* 反向代理至 backend 同源访问
+FROM node:20-slim AS build
 
 WORKDIR /app
 
-COPY package.json /app/package.json
+COPY package.json pnpm-lock.yaml ./
 
-# 使用 pnpm（与本地一致）
 RUN corepack enable && corepack prepare pnpm@latest --activate
-RUN pnpm install
+RUN pnpm install --frozen-lockfile
 
-COPY index.html /app/index.html
-COPY tsconfig.json /app/tsconfig.json
-COPY vite.config.ts /app/vite.config.ts
-COPY src /app/src
+COPY index.html tsconfig.json vite.config.ts ./
+COPY src ./src
 
-EXPOSE 5173
+ARG VITE_API_BASE_URL=/api
+ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
 
-CMD ["pnpm", "dev", "--", "--host", "0.0.0.0", "--port", "5173"]
+RUN pnpm build
 
+FROM nginx:1.26-alpine
+
+COPY --from=build /app/dist /usr/share/nginx/html
+COPY nginx/default.conf /etc/nginx/conf.d/default.conf
+
+EXPOSE 80
+
+CMD ["nginx", "-g", "daemon off;"]

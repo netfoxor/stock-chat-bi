@@ -420,7 +420,7 @@ services:
   mysql:
     image: mysql:8.0
     environment:
-      MYSQL_DATABASE: stock_analysis
+      MYSQL_DATABASE: stock
     volumes:
       - mysql_data:/var/lib/mysql
 
