@@ -269,7 +269,7 @@ POST /api/chat/stream
 ```json
 {
   "conversation_id": 1,
-  "message": "帮我查茅台最近一个月收盘价",
+  "message": "帮我查茅台最近一个月的历史行情",
   "image": "base64..."   // 可选，多模态
 }
 ```

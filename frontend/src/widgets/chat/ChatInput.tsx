@@ -36,7 +36,7 @@ export function ChatInput(props: {
   return (
     <Space.Compact style={{ width: "100%" }}>
       <Input
-        placeholder="问我：茅台最近一个月收盘价走势"
+        placeholder="问我：茅台最近一个月的历史行情"
         value={value}
         onChange={(e) => setValue(e.target.value)}
         onPressEnter={() => {
