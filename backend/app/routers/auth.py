@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import create_access_token, hash_password, verify_password
 from app.core.database import get_db
+from app.models.conversation import Conversation
 from app.models.dashboard import Dashboard
 from app.models.user import User
 from app.schemas.auth import LoginRequest, RegisterRequest, TokenResponse
@@ -24,6 +25,7 @@ async def register(payload: RegisterRequest, db: AsyncSession = Depends(get_db))
     db.add(user)
     await db.flush()
     db.add(Dashboard(user_id=user.id, name="默认大屏"))
+    db.add(Conversation(user_id=user.id, title="默认会话"))
     await db.commit()
 
     return {"id": user.id, "username": user.username}

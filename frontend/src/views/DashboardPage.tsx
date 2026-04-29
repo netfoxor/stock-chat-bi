@@ -114,16 +114,16 @@ export function DashboardPage() {
                       },
                     });
                   }}
-                  styles={{
-                    root: deleteDisabled
+                  style={
+                    deleteDisabled
                       ? {
                           opacity: 1,
                           color: "rgba(255, 255, 255, 0.72)",
                           borderColor: "rgba(255, 255, 255, 0.38)",
                           background: "rgba(255, 255, 255, 0.1)",
                         }
-                      : undefined,
-                  }}
+                      : undefined
+                  }
                 >
                   删除大屏
                 </Button>

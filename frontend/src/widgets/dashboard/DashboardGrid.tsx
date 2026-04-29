@@ -95,7 +95,26 @@ export function DashboardGrid() {
   }, [dragging]);
 
   return (
-    <div ref={wrapRef} style={{ height: "100%", background: "#fafafa", border: "1px solid #f0f0f0" }}>
+    <div ref={wrapRef} style={{ height: "100%", background: "#fafafa", border: "1px solid #f0f0f0", position: "relative" }}>
+      {widgets.length === 0 && (
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            pointerEvents: "none",
+            color: "#d9d9d9",
+            fontSize: 15,
+            textAlign: "center",
+            padding: 24,
+            zIndex: 0,
+          }}
+        >
+          和AI助理聊天，获取想到的数据，并添加到此大屏
+        </div>
+      )}
       <AutoWidthGridLayout
         className="layout"
         layout={layout}
