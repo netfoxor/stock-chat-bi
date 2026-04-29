@@ -22,6 +22,9 @@ from app.services.nanobot_service import ask
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
+_SQL_FENCE_DETECT = re.compile(r"```sql\s*\n", re.IGNORECASE)
+_VIZ_FENCE_START = re.compile(r"```(?:echarts|datatable)\b", re.IGNORECASE)
+
 _FENCE_RE = re.compile(r"```(?P<lang>echarts|datatable)\n(?P<body>[\s\S]*?)\n```", re.IGNORECASE)
 _MD_TABLE_RE = re.compile(
     r"(?P<table>(?:^\|.*\|\s*$\n){2,}(?:^\|.*\|\s*$\n?)*)",
@@ -91,6 +94,59 @@ def _augment_markdown_with_blocks(text: str) -> str:
         return text.rstrip() + "\n\n" + "\n\n".join(blocks) + "\n"
 
     return text
+
+
+# 一轮里出现多条不同 SQL 时，不回填 ```sql，仅追加说明（大屏需与单条查询一一对应）
+_MULTI_EXC_SQL_HINT = (
+    "\n\n---\n\n"
+    "**提示**：本轮执行了**多条不同的 SQL**。添加到大屏时，图表/表格只与**一条**查询绑定，"
+    "暂不支持同一轮里多次查询。请**新开对话**，每轮只问一个数据问题；或把多个指标合并为**一条** SQL（子查询、JOIN、WITH 等）。\n"
+)
+
+
+def _exc_sql_chronological_inputs(trace: list[Any] | None) -> list[str]:
+    """工具 exc_sql 的 input.sql_input，按 trace 出现顺序（含重试导致的重复）。"""
+    out: list[str] = []
+    for row in trace or []:
+        if not isinstance(row, dict) or row.get("name") != "exc_sql":
+            continue
+        inp = row.get("input")
+        if not isinstance(inp, dict):
+            continue
+        sql = inp.get("sql_input")
+        if not isinstance(sql, str) or not sql.strip():
+            continue
+        out.append(sql.strip())
+    return out
+
+
+def merge_sql_from_exc_sql_trace(text: str, trace: list[Any] | None) -> str:
+    """
+    大屏「添加」依赖 ```sql 块；正文可能不含 fence 时从 trace 回填。
+    仅当本轮仅有一条语义上的 SQL（trace 中去重后为 1）时回填，且使用**最后一次** exc_sql 的原文。
+    若存在多条不同 SQL，不回填并追加说明，避免图表与查询错配。
+    """
+    body = text or ""
+    if _SQL_FENCE_DETECT.search(body):
+        return body
+    chronological = _exc_sql_chronological_inputs(trace)
+    if not chronological:
+        return body
+    if len(set(chronological)) > 1:
+        trimmed = body.rstrip()
+        hint = _MULTI_EXC_SQL_HINT
+        return (trimmed + hint) if trimmed else hint.lstrip()
+
+    sql = chronological[-1]
+    blocks = f"```sql\n{sql}\n```\n\n"
+    m = _VIZ_FENCE_START.search(body)
+    if m:
+        idx = m.start()
+        return body[:idx] + blocks + body[idx:]
+    trimmed = body.rstrip()
+    if trimmed:
+        return trimmed + "\n\n" + blocks.rstrip() + "\n"
+    return blocks.rstrip() + "\n"
 
 
 def _md_table_to_datatable(table_md: str) -> dict[str, Any] | None:
@@ -269,6 +325,7 @@ async def chat_stream(
                 pass
 
         answer, trace = await ask_task
+        answer = merge_sql_from_exc_sql_trace(answer, trace)
 
         # 按块流式输出（非 token 级，但足够驱动打字机效果）
         chunk_size = 120
