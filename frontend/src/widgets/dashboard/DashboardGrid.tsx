@@ -1,6 +1,6 @@
-import { Button, Card, Input, Modal, Segmented, Select, Space, Typography, message } from "antd";
+import { Button, Card, Input, Modal, Segmented, Select, Space, Spin, Typography, message } from "antd";
 import { SettingOutlined, EditOutlined, DeleteOutlined } from "@ant-design/icons";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, lazy, Suspense } from "react";
 import GridLayout, { Layout, WidthProvider } from "react-grid-layout";
 import { api } from "../../api/client";
 import { useDashboardStore } from "../../store/dashboardStore";
@@ -9,6 +9,11 @@ import { useElementSize } from "../../hooks/useElementSize";
 
 import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
+
+const LazyJsonEditor = lazy(async () => {
+  const mod = await import("./JsonConfigEditor");
+  return { default: mod.JsonConfigEditor };
+});
 
 const AutoWidthGridLayout = WidthProvider(GridLayout);
 
@@ -24,7 +29,7 @@ const FALLBACK_TABLE_TRANSFORMS = [
 ];
 
 type CronPreset = "off" | "1m" | "5m" | "15m" | "1h" | "custom";
-type ConfigModalTab = "sql" | "echarts" | "table" | "transform" | "poll" | "raw";
+type ConfigModalTab = "sql" | "echarts" | "table" | "transform" | "poll";
 
 /** 解析「每 N 分钟 / 每小时」类 cron，得到秒数；不支持则返回 null */
 function cronToIntervalSeconds(cron: string): number | null {
@@ -101,7 +106,6 @@ export function DashboardGrid() {
     chart: { id: string; label: string }[];
     table: { id: string; label: string }[];
   } | null>(null);
-  const [rawJson, setRawJson] = useState<string>("{}");
 
   useEffect(() => {
     if (!configOpen) return;
@@ -117,9 +121,8 @@ export function DashboardGrid() {
       return [
         { label: "SQL", value: "sql" satisfies ConfigModalTab },
         { label: "图表转换", value: "transform" satisfies ConfigModalTab },
-        { label: "图表模板", value: "echarts" satisfies ConfigModalTab },
+        { label: "图表配置", value: "echarts" satisfies ConfigModalTab },
         { label: "轮询", value: "poll" satisfies ConfigModalTab },
-        { label: "原始JSON", value: "raw" satisfies ConfigModalTab },
       ];
     }
     if (wType === "table") {
@@ -128,14 +131,12 @@ export function DashboardGrid() {
         { label: "表格转换", value: "transform" satisfies ConfigModalTab },
         { label: "表格选项", value: "table" satisfies ConfigModalTab },
         { label: "轮询", value: "poll" satisfies ConfigModalTab },
-        { label: "原始JSON", value: "raw" satisfies ConfigModalTab },
       ];
     }
     return [
       { label: "SQL", value: "sql" satisfies ConfigModalTab },
       { label: "转换", value: "transform" satisfies ConfigModalTab },
       { label: "轮询", value: "poll" satisfies ConfigModalTab },
-      { label: "原始JSON", value: "raw" satisfies ConfigModalTab },
     ];
   }, [configWidget?.type]);
 
@@ -304,10 +305,7 @@ export function DashboardGrid() {
                       setTableJson(JSON.stringify(cfg?.table ?? {}, null, 2));
                       setTransformChart(String(cfg.transform_chart ?? ""));
                       setTransformTable(String(cfg.transform_table ?? ""));
-                      setTransformParamsJson(
-                        JSON.stringify(cfg.transform_params ?? { ts_code: "600519.SH", n: 10 }, null, 2),
-                      );
-                      setRawJson(JSON.stringify(cfg ?? {}, null, 2));
+                      setTransformParamsJson(JSON.stringify(cfg.transform_params ?? {}, null, 2));
                       setConfigOpen(true);
                     }}
                   />
@@ -338,6 +336,8 @@ export function DashboardGrid() {
         title={configWidget?.type === "chart" ? "图表组件配置" : configWidget?.type === "table" ? "表格组件配置" : "组件配置"}
         okText="保存"
         cancelText="取消"
+        width={1000}
+        styles={{ body: { maxHeight: "min(1200px, 82vh)", overflowY: "auto" } }}
         onCancel={() => setConfigOpen(false)}
         onOk={async () => {
           if (!configWidget) return;
@@ -350,7 +350,6 @@ export function DashboardGrid() {
             } catch {
               throw new Error("转换参数必须是合法 JSON");
             }
-            const baseRaw = JSON.parse(rawJson || "{}");
             const cronStr =
               cronPreset === "off"
                 ? ""
@@ -367,16 +366,13 @@ export function DashboardGrid() {
             const interval_sec = resolveIntervalSec({ cronPreset, cronVal, cronStr });
 
             const merged = {
-              ...baseRaw,
               sql: sqlVal,
               echarts: echartsObj,
               table: tableObj,
               transform_chart: transformChart.trim(),
               transform_table: transformTable.trim(),
               transform_params: tpObj,
-              poll: cronStr
-                ? { ...(baseRaw.poll ?? {}), cron: cronStr, interval_sec }
-                : { ...(baseRaw.poll ?? {}), cron: "", interval_sec: 0 },
+              poll: cronStr ? { cron: cronStr, interval_sec } : { cron: "", interval_sec: 0 },
             };
 
             await updateWidget(configWidget.id, { config: merged });
@@ -400,7 +396,7 @@ export function DashboardGrid() {
               {configWidget?.type === "chart" ? (
                 <>
                   填写只读 SELECT（MySQL）。轮询时请求「/dashboard/query」并由服务端生成<strong>图表</strong>所用数据；
-                  「图表模板」仅作占位 / 预览。
+                  「图表配置」保存为 **config.echarts**（占位 / 预览；轮询后以接口生成的 option 为主）。
                 </>
               ) : (
                 <>
@@ -412,7 +408,7 @@ export function DashboardGrid() {
               若选用「ARIMA」「布林带」等转换而不依赖本条 SQL：可用占位语句，例如{" "}
               <code style={{ whiteSpace: "nowrap" }}>SELECT 1 AS dummy</code>。
             </Typography.Paragraph>
-            <Input.TextArea rows={8} value={sqlVal} onChange={(e) => setSqlVal(e.target.value)} placeholder="SELECT ..." />
+            <Input.TextArea rows={16} value={sqlVal} onChange={(e) => setSqlVal(e.target.value)} placeholder="SELECT ..." />
           </>
         )}
 
@@ -439,7 +435,7 @@ export function DashboardGrid() {
               {"{"} &quot;ts_code&quot;: &quot;600519.SH&quot;, &quot;start&quot;: &quot;2024-01-01&quot;,
               &quot;end&quot;: &quot;2025-04-01&quot; {"}"}（布林带 start/end 可省略）
             </Typography.Paragraph>
-            <Input.TextArea rows={8} value={transformParamsJson} onChange={(e) => setTransformParamsJson(e.target.value)} />
+            <Input.TextArea rows={14} value={transformParamsJson} onChange={(e) => setTransformParamsJson(e.target.value)} />
           </>
         )}
         {configTab === "transform" && configWidget?.type === "table" && (
@@ -465,15 +461,25 @@ export function DashboardGrid() {
               {"{"} &quot;ts_code&quot;: &quot;600519.SH&quot;, &quot;start&quot;: &quot;2024-01-01&quot;,
               &quot;end&quot;: &quot;2025-04-01&quot; {"}"}（布林带 start/end 可省略）
             </Typography.Paragraph>
-            <Input.TextArea rows={8} value={transformParamsJson} onChange={(e) => setTransformParamsJson(e.target.value)} />
+            <Input.TextArea rows={14} value={transformParamsJson} onChange={(e) => setTransformParamsJson(e.target.value)} />
           </>
         )}
         {configTab === "echarts" && configWidget?.type === "chart" && (
           <>
             <Typography.Paragraph type="secondary" style={{ marginBottom: 8 }}>
-              初次展示或轮询开启前的静态 ECharts「壳」；轮询后以接口返回的 option 为主（可被「图表转换」覆盖）。
+              编辑 ECharts option 的 JSON；保存前会做语法校验。初次展示或未开轮询时作静态壳；刷新后以「/dashboard/query」返回的图表数据为准。
             </Typography.Paragraph>
-            <Input.TextArea rows={10} value={echartsJson} onChange={(e) => setEchartsJson(e.target.value)} />
+            <div style={{ border: "1px solid #f0f0f0", borderRadius: 8, overflow: "hidden", minHeight: 380 }}>
+              <Suspense
+                fallback={
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: 380 }}>
+                    <Spin tip="加载 JSON 编辑器" />
+                  </div>
+                }
+              >
+                <LazyJsonEditor height={380} value={echartsJson} onChange={setEchartsJson} />
+              </Suspense>
+            </div>
           </>
         )}
 
@@ -482,7 +488,7 @@ export function DashboardGrid() {
             <Typography.Paragraph type="secondary" style={{ marginBottom: 8 }}>
               Ant Design Table 的列宽、滚动、分页等覆盖项（dataSource/columns 由 SQL 刷新与「表格转换」注入）。
             </Typography.Paragraph>
-            <Input.TextArea rows={10} value={tableJson} onChange={(e) => setTableJson(e.target.value)} />
+            <Input.TextArea rows={20} value={tableJson} onChange={(e) => setTableJson(e.target.value)} />
           </>
         )}
 
@@ -513,15 +519,6 @@ export function DashboardGrid() {
                 placeholder="例如：*/5 * * * *（每 5 分钟）"
               />
             )}
-          </>
-        )}
-
-        {configTab === "raw" && (
-          <>
-            <Typography.Paragraph type="secondary" style={{ marginBottom: 8 }}>
-              完整 config JSON（兜底）。上面表单保存时会与这里合并。
-            </Typography.Paragraph>
-            <Input.TextArea rows={10} value={rawJson} onChange={(e) => setRawJson(e.target.value)} />
           </>
         )}
       </Modal>

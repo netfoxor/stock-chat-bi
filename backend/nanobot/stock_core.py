@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import sys
 import time
 from datetime import date, datetime, timedelta
@@ -519,16 +520,93 @@ def format_datatable_fence(payload: dict, *, truncation_note_rows: int | None = 
     return block
 
 
+_YMD_FULL = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def dates_are_daily_strings(dates: list) -> bool:
+    """X 轴为 ``YYYY-MM-DD`` 时使用 ECharts ``time`` 轴。"""
+    if not dates:
+        return False
+    for x in dates:
+        if not isinstance(x, str) or not _YMD_FULL.fullmatch(x):
+            return False
+    return True
+
+
+def _format_y_tick_estimate(v: Any) -> int:
+    """与 ECharts 默认数值刻度长度同阶的粗略字符数（用于估算 grid.left）。"""
+    if v is None:
+        return 1
+    try:
+        xf = float(v)
+        if math.isnan(xf) or math.isinf(xf):
+            return 1
+        s = f"{xf:.6g}"
+        return max(4, len(s))
+    except (TypeError, ValueError):
+        return max(4, len(str(v)))
+
+
+def _grid_left_px_from_values(
+    *collections: list[Any],
+    floor: int = 48,
+    ceiling: int = 240,
+    extra_pad: int = 0,
+) -> int:
+    maxlen = 4
+    for coll in collections:
+        if not coll:
+            continue
+        for v in coll:
+            maxlen = max(maxlen, _format_y_tick_estimate(v))
+    char_w = 7
+    margin = 28 + extra_pad
+    return int(min(ceiling, max(floor, maxlen * char_w + margin)))
+
+
+def _pairs_date_value(dates: list[str], values: list[Any]) -> list[list[Any]]:
+    out: list[list[Any]] = []
+    n = min(len(dates), len(values))
+    for i in range(n):
+        y = values[i]
+        if y is None:
+            continue
+        try:
+            if isinstance(y, float) and (math.isnan(y) or math.isinf(y)):
+                continue
+        except (TypeError, ValueError):
+            pass
+        out.append([str(dates[i]), float(y)])
+    return out
+
+
 # --------------------------------------------------------------------------- #
 # ECharts option builders
 # --------------------------------------------------------------------------- #
 
 def _build_kline_option(dates, ohlc, volumes, title):
     closes = [row[1] for row in ohlc]
+    use_time = dates_are_daily_strings(dates)
+
+    nums_for_margin: list[Any] = [*closes]
+    for row in ohlc:
+        nums_for_margin.extend(row)
+    if volumes is not None and len(volumes) == len(dates):
+        nums_for_margin.extend([v for v in volumes if v is not None])
+    left_px = _grid_left_px_from_values(nums_for_margin)
+
+    if use_time:
+        candle_data: list[list[Any]] = [
+            [str(dates[i]), ohlc[i][0], ohlc[i][1], ohlc[i][2], ohlc[i][3]]
+            for i in range(len(dates))
+        ]
+    else:
+        candle_data = ohlc
+
     series: list[dict] = [{
         "name": "K线",
         "type": "candlestick",
-        "data": ohlc,
+        "data": candle_data,
         "itemStyle": {
             "color": COLOR_UP,
             "color0": COLOR_DOWN,
@@ -540,10 +618,17 @@ def _build_kline_option(dates, ohlc, volumes, title):
     legend_items = ["K线"]
     for period, color in zip((5, 10, 20), COLOR_MA):
         if len(closes) >= period:
+            ma_vals = _moving_average(closes, period)
+            if use_time:
+                ma_pts = [[str(dates[j]), float(ma_vals[j])] for j in range(len(dates))
+                          if ma_vals[j] is not None]
+                ma_data = ma_pts
+            else:
+                ma_data = ma_vals
             series.append({
                 "name": f"MA{period}",
                 "type": "line",
-                "data": _moving_average(closes, period),
+                "data": ma_data,
                 "smooth": True,
                 "showSymbol": False,
                 "lineStyle": {"width": 1.1, "opacity": 0.95, "color": color},
@@ -553,31 +638,55 @@ def _build_kline_option(dates, ohlc, volumes, title):
 
     has_vol = volumes is not None and len(volumes) == len(dates)
     grids = [{
-        "left": "7%", "right": "4%", "top": 56,
+        "left": left_px, "right": 32, "top": 56,
         "height": "58%" if has_vol else "78%",
     }]
-    x_axes = [{
-        "type": "category", "data": dates,
-        "scale": True, "boundaryGap": False,
-        "axisLine": {"onZero": False},
-        "splitLine": {"show": False},
-        "axisTick": {"show": False},
-        "min": "dataMin", "max": "dataMax",
-    }]
+
+    if use_time:
+        x_axes: list[dict] = [{
+            "type": "time",
+            "scale": True, "boundaryGap": False,
+            "axisLine": {"onZero": False},
+            "splitLine": {"show": False},
+            "axisTick": {"show": False},
+            "min": "dataMin", "max": "dataMax",
+        }]
+    else:
+        x_axes = [{
+            "type": "category", "data": dates,
+            "scale": True, "boundaryGap": False,
+            "axisLine": {"onZero": False},
+            "splitLine": {"show": False},
+            "axisTick": {"show": False},
+            "min": "dataMin", "max": "dataMax",
+        }]
     y_axes = [{"scale": True, "splitArea": {"show": True}}]
     dz_axes = [0]
 
     if has_vol:
-        grids.append({"left": "7%", "right": "4%", "top": "74%", "height": "16%"})
-        x_axes.append({
-            "type": "category", "gridIndex": 1, "data": dates,
-            "scale": True, "boundaryGap": False,
-            "axisLine": {"onZero": False},
-            "axisLabel": {"show": False},
-            "axisTick": {"show": False},
-            "splitLine": {"show": False},
-            "min": "dataMin", "max": "dataMax",
-        })
+        grids.append({"left": left_px, "right": 32, "top": "74%", "height": "16%"})
+        if use_time:
+            x_axes.append({
+                "type": "time",
+                "gridIndex": 1,
+                "scale": True,
+                "boundaryGap": False,
+                "axisLine": {"onZero": False},
+                "axisLabel": {"show": False},
+                "axisTick": {"show": False},
+                "splitLine": {"show": False},
+                "min": "dataMin", "max": "dataMax",
+            })
+        else:
+            x_axes.append({
+                "type": "category", "gridIndex": 1, "data": dates,
+                "scale": True, "boundaryGap": False,
+                "axisLine": {"onZero": False},
+                "axisLabel": {"show": False},
+                "axisTick": {"show": False},
+                "splitLine": {"show": False},
+                "min": "dataMin", "max": "dataMax",
+            })
         y_axes.append({
             "gridIndex": 1, "scale": True, "splitNumber": 2,
             "axisLabel": {"show": False},
@@ -587,11 +696,17 @@ def _build_kline_option(dates, ohlc, volumes, title):
         })
         dz_axes.append(1)
         up_mask = [row[1] >= row[0] for row in ohlc]
-        vol_data = [
-            {"value": (v if v is not None else 0),
-             "itemStyle": {"color": COLOR_UP if u else COLOR_DOWN}}
-            for v, u in zip(volumes, up_mask)
-        ]
+        vol_data = []
+        for i, v in enumerate(volumes or []):
+            val = v if v is not None else 0
+            col = COLOR_UP if up_mask[i] else COLOR_DOWN
+            if use_time:
+                vol_data.append({
+                    "value": [str(dates[i]), val],
+                    "itemStyle": {"color": col},
+                })
+            else:
+                vol_data.append({"value": val, "itemStyle": {"color": col}})
         series.append({
             "name": "成交量",
             "type": "bar",
@@ -624,7 +739,7 @@ def _build_kline_option(dates, ohlc, volumes, title):
         "dataZoom": [
             {"type": "inside", "xAxisIndex": dz_axes, "start": start_pct, "end": 100},
             {"show": True, "type": "slider", "xAxisIndex": dz_axes,
-             "bottom": 8, "height": 18,
+             "bottom": 16, "height": 18,
              "start": start_pct, "end": 100},
         ],
         "series": series,
@@ -638,6 +753,14 @@ def _simple_grid_option(dates, *, title, panels):
     usable = 100 - top_reserve - bottom_reserve - gap_pct * (n_panels - 1)
     each_h = usable / n_panels
 
+    use_time = dates_are_daily_strings(dates)
+    nums_for_margin: list[Any] = []
+    for panel in panels:
+        for s in panel.get("series", []):
+            nums_for_margin.extend(s.get("data") or [])
+    yname_extra = max((len(panel.get("yname") or "") for panel in panels), default=0) * 6
+    left_px = _grid_left_px_from_values(nums_for_margin, extra_pad=min(72, yname_extra))
+
     grids: list[dict] = []
     x_axes: list[dict] = []
     y_axes: list[dict] = []
@@ -648,20 +771,37 @@ def _simple_grid_option(dates, *, title, panels):
     for i, panel in enumerate(panels):
         top_pct = top_reserve + i * (each_h + gap_pct)
         grids.append({
-            "left": "7%", "right": "4%",
+            "left": left_px,
+            "right": 32,
             "top": f"{top_pct:.2f}%",
             "height": f"{each_h:.2f}%",
         })
-        x_axes.append({
-            "type": "category",
-            "gridIndex": i,
-            "data": dates,
-            "boundaryGap": (panel.get("type") == "bar"),
-            "axisLabel": {"show": i == n_panels - 1},
-            "axisLine": {"onZero": False},
-            "axisTick": {"show": i == n_panels - 1},
-            "splitLine": {"show": False},
-        })
+
+        boundary_gap_val = any(s.get("type") == "bar" for s in panel.get("series", []))
+        if use_time:
+            x_axes.append({
+                "type": "time",
+                "gridIndex": i,
+                "scale": True,
+                "boundaryGap": boundary_gap_val,
+                "axisLabel": {"show": i == n_panels - 1},
+                "axisLine": {"onZero": False},
+                "axisTick": {"show": i == n_panels - 1},
+                "splitLine": {"show": False},
+                "min": "dataMin", "max": "dataMax",
+            })
+        else:
+            x_axes.append({
+                "type": "category",
+                "gridIndex": i,
+                "data": dates,
+                "boundaryGap": boundary_gap_val,
+                "axisLabel": {"show": i == n_panels - 1},
+                "axisLine": {"onZero": False},
+                "axisTick": {"show": i == n_panels - 1},
+                "splitLine": {"show": False},
+            })
+
         y_axes.append({
             "gridIndex": i, "scale": True,
             "name": panel.get("yname", ""),
@@ -670,12 +810,25 @@ def _simple_grid_option(dates, *, title, panels):
         })
 
         for s in panel.get("series", []):
+            raw_data = s["data"]
+            if use_time:
+                stype = s.get("type", "line")
+                pdata: list[list[Any]] = []
+                for j in range(min(len(dates), len(raw_data))):
+                    yj = raw_data[j]
+                    if yj is None:
+                        continue
+                    pdata.append([str(dates[j]), yj])
+                plotted = pdata
+            else:
+                plotted = raw_data
+
             entry: dict = {
                 "name": s["name"],
                 "type": s.get("type", "line"),
                 "xAxisIndex": i,
                 "yAxisIndex": i,
-                "data": s["data"],
+                "data": plotted,
                 "showSymbol": s.get("showSymbol", False),
                 "smooth": s.get("smooth", True),
             }
@@ -706,7 +859,7 @@ def _simple_grid_option(dates, *, title, panels):
         "dataZoom": [
             {"type": "inside", "xAxisIndex": dz_axes, "start": 0, "end": 100},
             {"show": True, "type": "slider", "xAxisIndex": dz_axes,
-             "bottom": 8, "height": 18, "start": 0, "end": 100},
+             "bottom": 16, "height": 18, "start": 0, "end": 100},
         ],
         "series": series,
     }
@@ -799,32 +952,85 @@ def build_stock_echart(df_sql: pd.DataFrame, *, max_rows: int = 500
 
 def build_arima_echart(hist_dates, hist_close, fc_dates, fc_mean,
                        fc_low, fc_high, title):
-    """历史收盘 + 预测均值 + 95% 置信带（stack 技巧）。"""
-    all_dates = list(hist_dates) + list(fc_dates)
-    n_hist, n_fc = len(hist_dates), len(fc_dates)
+    """历史收盘 + 预测均值 + 95% 置信带（stack 技巧）。日期为 ``YYYY-MM-DD`` 时使用 time 轴。"""
+    left_px = _grid_left_px_from_values(hist_close, fc_mean, fc_low, fc_high)
+    hd = [str(x) for x in hist_dates]
+    fd = [str(x) for x in fc_dates]
+    use_time = dates_are_daily_strings(hd) and dates_are_daily_strings(fd)
 
-    hist_series = list(hist_close) + [None] * n_fc
-    fc_series = [None] * (n_hist - 1) + [hist_close[-1]] + list(fc_mean)
-    ci_low = [None] * n_hist + list(fc_low)
-    ci_diff = [None] * n_hist + [h - l for h, l in zip(fc_high, fc_low)]
+    if use_time:
+        ci_low_pts = [[fd[i], float(fc_low[i])] for i in range(len(fd))]
+        ci_diff_pts = [
+            [fd[i], float(fc_high[i]) - float(fc_low[i])]
+            for i in range(len(fd))
+        ]
+        hist_pts = [[hd[i], float(hist_close[i])] for i in range(len(hd))]
+        fc_pts = [[hd[-1], float(hist_close[-1])]]
+        fc_pts.extend([[fd[i], float(fc_mean[i])] for i in range(len(fd))])
 
-    series = [
-        {"name": "95% 置信区间", "type": "line", "data": ci_low, "stack": "ci",
-         "lineStyle": {"opacity": 0}, "showSymbol": False,
-         "itemStyle": {"color": "transparent"}, "tooltip": {"show": False}},
-        {"name": "95% 置信区间", "type": "line", "data": ci_diff, "stack": "ci",
-         "lineStyle": {"opacity": 0}, "showSymbol": False,
-         "areaStyle": {"color": COLOR_CI},
-         "itemStyle": {"color": COLOR_CI}},
-        {"name": "历史收盘", "type": "line", "data": hist_series,
-         "showSymbol": False, "smooth": True,
-         "lineStyle": {"width": 1.6, "color": COLOR_CLOSE},
-         "itemStyle": {"color": COLOR_CLOSE}, "connectNulls": False},
-        {"name": "ARIMA 预测", "type": "line", "data": fc_series,
-         "symbol": "circle", "symbolSize": 6, "showSymbol": True, "smooth": False,
-         "lineStyle": {"width": 1.8, "color": COLOR_FORECAST, "type": "dashed"},
-         "itemStyle": {"color": COLOR_FORECAST}, "connectNulls": False},
-    ]
+        series = [
+            {"name": "95% 置信区间", "type": "line", "data": ci_low_pts,
+             "stack": "ci",
+             "lineStyle": {"opacity": 0}, "showSymbol": False,
+             "itemStyle": {"color": "transparent"}, "tooltip": {"show": False}},
+            {"name": "95% 置信区间", "type": "line", "data": ci_diff_pts,
+             "stack": "ci",
+             "lineStyle": {"opacity": 0}, "showSymbol": False,
+             "areaStyle": {"color": COLOR_CI},
+             "itemStyle": {"color": COLOR_CI}},
+            {"name": "历史收盘", "type": "line", "data": hist_pts,
+             "showSymbol": False, "smooth": True,
+             "lineStyle": {"width": 1.6, "color": COLOR_CLOSE},
+             "itemStyle": {"color": COLOR_CLOSE}},
+            {"name": "ARIMA 预测", "type": "line", "data": fc_pts,
+             "symbol": "circle", "symbolSize": 6, "showSymbol": True,
+             "smooth": False,
+             "lineStyle": {"width": 1.8, "color": COLOR_FORECAST,
+                           "type": "dashed"},
+             "itemStyle": {"color": COLOR_FORECAST}},
+        ]
+        x_axis: dict[str, Any] = {
+            "type": "time",
+            "boundaryGap": False, "scale": True,
+            "axisLine": {"onZero": False},
+            "min": "dataMin", "max": "dataMax",
+        }
+    else:
+        all_dates = hd + fd
+        n_hist, n_fc = len(hd), len(fd)
+
+        hist_series = list(hist_close) + [None] * n_fc
+        fc_series = [None] * (n_hist - 1) + [hist_close[-1]] + list(fc_mean)
+        ci_low_arr = [None] * n_hist + list(fc_low)
+        ci_diff_arr = ([None] * n_hist +
+                       [h - l for h, l in zip(fc_high, fc_low)])
+
+        series = [
+            {"name": "95% 置信区间", "type": "line", "data": ci_low_arr,
+             "stack": "ci",
+             "lineStyle": {"opacity": 0}, "showSymbol": False,
+             "itemStyle": {"color": "transparent"}, "tooltip": {"show": False}},
+            {"name": "95% 置信区间", "type": "line", "data": ci_diff_arr,
+             "stack": "ci",
+             "lineStyle": {"opacity": 0}, "showSymbol": False,
+             "areaStyle": {"color": COLOR_CI},
+             "itemStyle": {"color": COLOR_CI}},
+            {"name": "历史收盘", "type": "line", "data": hist_series,
+             "showSymbol": False, "smooth": True,
+             "lineStyle": {"width": 1.6, "color": COLOR_CLOSE},
+             "itemStyle": {"color": COLOR_CLOSE}, "connectNulls": False},
+            {"name": "ARIMA 预测", "type": "line", "data": fc_series,
+             "symbol": "circle", "symbolSize": 6, "showSymbol": True,
+             "smooth": False,
+             "lineStyle": {"width": 1.8, "color": COLOR_FORECAST,
+                           "type": "dashed"},
+             "itemStyle": {"color": COLOR_FORECAST}, "connectNulls": False},
+        ]
+        x_axis = {
+            "type": "category", "data": all_dates,
+            "boundaryGap": False, "scale": True,
+            "axisLine": {"onZero": False},
+        }
 
     return {
         "animation": False,
@@ -833,15 +1039,13 @@ def build_arima_echart(hist_dates, hist_close, fc_dates, fc_mean,
         "legend": {"data": ["历史收盘", "ARIMA 预测", "95% 置信区间"],
                    "top": 30, "textStyle": {"fontSize": 12}},
         "tooltip": {"trigger": "axis", "axisPointer": {"type": "cross"}},
-        "grid": {"left": "7%", "right": "4%", "top": 64, "bottom": 64},
-        "xAxis": {"type": "category", "data": all_dates,
-                  "boundaryGap": False, "scale": True,
-                  "axisLine": {"onZero": False}},
+        "grid": {"left": left_px, "right": 32, "top": 64, "bottom": 64},
+        "xAxis": x_axis,
         "yAxis": {"type": "value", "scale": True,
                   "splitLine": {"lineStyle": {"opacity": 0.4}}},
         "dataZoom": [
             {"type": "inside", "start": 0, "end": 100},
-            {"show": True, "type": "slider", "bottom": 8, "height": 18,
+            {"show": True, "type": "slider", "bottom": 16, "height": 18,
              "start": 0, "end": 100},
         ],
         "series": series,
@@ -850,44 +1054,119 @@ def build_arima_echart(hist_dates, hist_close, fc_dates, fc_mean,
 
 def build_boll_echart(dates, close, mid, upper, lower, ob_idx, os_idx, title):
     """收盘 + MA20 + ±2σ 上下轨 + 带区 + 超买/超卖散点。"""
-    diff = [
+    ds = [str(x) for x in dates]
+    left_px = _grid_left_px_from_values(close, mid, upper, lower)
+    use_time = dates_are_daily_strings(ds)
+
+    diff_arr = [
         None if (u is None or l is None) else round(u - l, 4)
         for u, l in zip(upper, lower)
     ]
-    ob_points = [[dates[i], close[i]] for i in ob_idx]
-    os_points = [[dates[i], close[i]] for i in os_idx]
+    ob_points = [[ds[i], close[i]] for i in ob_idx]
+    os_points = [[ds[i], close[i]] for i in os_idx]
 
-    series = [
-        {"name": "布林下轨", "type": "line", "data": lower, "stack": "boll",
-         "lineStyle": {"opacity": 0}, "showSymbol": False,
-         "tooltip": {"show": False},
-         "itemStyle": {"color": "transparent"}},
-        {"name": "布林带", "type": "line", "data": diff, "stack": "boll",
-         "lineStyle": {"opacity": 0}, "showSymbol": False,
-         "areaStyle": {"color": COLOR_BOLL_BAND},
-         "itemStyle": {"color": COLOR_BOLL_BAND},
-         "tooltip": {"show": False}},
-        {"name": "上轨 +2σ", "type": "line", "data": upper,
-         "showSymbol": False,
-         "lineStyle": {"width": 1, "color": COLOR_BOLL_UP, "type": "dashed"},
-         "itemStyle": {"color": COLOR_BOLL_UP}},
-        {"name": "中轨 MA20", "type": "line", "data": mid,
-         "showSymbol": False,
-         "lineStyle": {"width": 1, "color": COLOR_BOLL_MID},
-         "itemStyle": {"color": COLOR_BOLL_MID}},
-        {"name": "下轨 -2σ", "type": "line", "data": lower,
-         "showSymbol": False,
-         "lineStyle": {"width": 1, "color": COLOR_BOLL_LOW, "type": "dashed"},
-         "itemStyle": {"color": COLOR_BOLL_LOW}},
-        {"name": "收盘", "type": "line", "data": close,
-         "showSymbol": False, "smooth": True,
-         "lineStyle": {"width": 1.6, "color": COLOR_CLOSE},
-         "itemStyle": {"color": COLOR_CLOSE}},
-        {"name": "超买", "type": "scatter", "data": ob_points,
-         "symbolSize": 10, "itemStyle": {"color": COLOR_UP}},
-        {"name": "超卖", "type": "scatter", "data": os_points,
-         "symbolSize": 10, "itemStyle": {"color": COLOR_DOWN}},
-    ]
+    if use_time:
+        band_lo: list[list[Any]] = []
+        band_hi: list[list[Any]] = []
+        for i in range(len(ds)):
+            u_raw, l_raw = upper[i], lower[i]
+            if u_raw is None or l_raw is None:
+                continue
+            d_str = ds[i]
+            lf = float(l_raw)
+            band_lo.append([d_str, lf])
+            band_hi.append([d_str, float(u_raw) - lf])
+
+        upper_p = _pairs_date_value(ds, upper)
+        mid_p = _pairs_date_value(ds, mid)
+        lower_vis_p = _pairs_date_value(ds, lower)
+        close_p = _pairs_date_value(ds, close)
+
+        series = [
+            {"name": "布林下轨", "type": "line", "data": band_lo,
+             "stack": "boll",
+             "lineStyle": {"opacity": 0}, "showSymbol": False,
+             "tooltip": {"show": False},
+             "itemStyle": {"color": "transparent"}},
+            {"name": "布林带", "type": "line", "data": band_hi,
+             "stack": "boll",
+             "lineStyle": {"opacity": 0}, "showSymbol": False,
+             "areaStyle": {"color": COLOR_BOLL_BAND},
+             "itemStyle": {"color": COLOR_BOLL_BAND},
+             "tooltip": {"show": False}},
+            {"name": "上轨 +2σ", "type": "line", "data": upper_p,
+             "showSymbol": False,
+             "lineStyle": {"width": 1, "color": COLOR_BOLL_UP,
+                           "type": "dashed"},
+             "itemStyle": {"color": COLOR_BOLL_UP}},
+            {"name": "中轨 MA20", "type": "line", "data": mid_p,
+             "showSymbol": False,
+             "lineStyle": {"width": 1, "color": COLOR_BOLL_MID},
+             "itemStyle": {"color": COLOR_BOLL_MID}},
+            {"name": "下轨 -2σ", "type": "line", "data": lower_vis_p,
+             "showSymbol": False,
+             "lineStyle": {"width": 1, "color": COLOR_BOLL_LOW,
+                           "type": "dashed"},
+             "itemStyle": {"color": COLOR_BOLL_LOW}},
+            {"name": "收盘", "type": "line", "data": close_p,
+             "showSymbol": False, "smooth": True,
+             "lineStyle": {"width": 1.6, "color": COLOR_CLOSE},
+             "itemStyle": {"color": COLOR_CLOSE}},
+            {"name": "超买", "type": "scatter", "data": ob_points,
+             "symbolSize": 10, "itemStyle": {"color": COLOR_UP}},
+            {"name": "超卖", "type": "scatter", "data": os_points,
+             "symbolSize": 10, "itemStyle": {"color": COLOR_DOWN}},
+        ]
+        xa: dict[str, Any] = {
+            "type": "time",
+            "boundaryGap": False, "scale": True,
+            "axisLine": {"onZero": False},
+            "min": "dataMin", "max": "dataMax",
+        }
+    else:
+        series = [
+            {"name": "布林下轨", "type": "line", "data": lower,
+             "stack": "boll",
+             "lineStyle": {"opacity": 0}, "showSymbol": False,
+             "tooltip": {"show": False},
+             "itemStyle": {"color": "transparent"}},
+            {"name": "布林带", "type": "line", "data": diff_arr,
+             "stack": "boll",
+             "lineStyle": {"opacity": 0}, "showSymbol": False,
+             "areaStyle": {"color": COLOR_BOLL_BAND},
+             "itemStyle": {"color": COLOR_BOLL_BAND},
+             "tooltip": {"show": False}},
+            {"name": "上轨 +2σ", "type": "line", "data": upper,
+             "showSymbol": False,
+             "lineStyle": {"width": 1, "color": COLOR_BOLL_UP,
+                           "type": "dashed"},
+             "itemStyle": {"color": COLOR_BOLL_UP}},
+            {"name": "中轨 MA20", "type": "line", "data": mid,
+             "showSymbol": False,
+             "lineStyle": {"width": 1, "color": COLOR_BOLL_MID},
+             "itemStyle": {"color": COLOR_BOLL_MID}},
+            {"name": "下轨 -2σ", "type": "line", "data": lower,
+             "showSymbol": False,
+             "lineStyle": {"width": 1, "color": COLOR_BOLL_LOW,
+                           "type": "dashed"},
+             "itemStyle": {"color": COLOR_BOLL_LOW}},
+            {"name": "收盘", "type": "line", "data": close,
+             "showSymbol": False, "smooth": True,
+             "lineStyle": {"width": 1.6, "color": COLOR_CLOSE},
+             "itemStyle": {"color": COLOR_CLOSE}},
+            {"name": "超买", "type": "scatter",
+             "data": [[dates[i], close[i]] for i in ob_idx],
+             "symbolSize": 10, "itemStyle": {"color": COLOR_UP}},
+            {"name": "超卖", "type": "scatter",
+             "data": [[dates[i], close[i]] for i in os_idx],
+             "symbolSize": 10, "itemStyle": {"color": COLOR_DOWN}},
+        ]
+        xa = {
+            "type": "category", "data": dates,
+            "boundaryGap": False, "scale": True,
+            "axisLine": {"onZero": False},
+        }
+
     legend = ["收盘", "中轨 MA20", "上轨 +2σ", "下轨 -2σ", "超买", "超卖"]
 
     return {
@@ -896,15 +1175,13 @@ def build_boll_echart(dates, close, mid, upper, lower, ob_idx, os_idx, title):
                   "textStyle": {"fontSize": 14}},
         "legend": {"data": legend, "top": 30, "textStyle": {"fontSize": 12}},
         "tooltip": {"trigger": "axis", "axisPointer": {"type": "cross"}},
-        "grid": {"left": "7%", "right": "4%", "top": 64, "bottom": 64},
-        "xAxis": {"type": "category", "data": dates,
-                  "boundaryGap": False, "scale": True,
-                  "axisLine": {"onZero": False}},
+        "grid": {"left": left_px, "right": 32, "top": 64, "bottom": 64},
+        "xAxis": xa,
         "yAxis": {"type": "value", "scale": True,
                   "splitLine": {"lineStyle": {"opacity": 0.4}}},
         "dataZoom": [
             {"type": "inside", "start": 0, "end": 100},
-            {"show": True, "type": "slider", "bottom": 8, "height": 18,
+            {"show": True, "type": "slider", "bottom": 16, "height": 18,
              "start": 0, "end": 100},
         ],
         "series": series,

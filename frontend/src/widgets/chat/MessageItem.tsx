@@ -4,6 +4,7 @@ import { domRectToSpot, type SpotRect } from "../../components/OnboardingSpotlig
 import { useDashboardStore } from "../../store/dashboardStore";
 import { useOnboardingStore } from "../../store/onboardingStore";
 import { extractSpecialBlocks, InlineDataTable, InlineECharts, MarkdownView } from "./renderers";
+import { buildChartWidgetConfig, buildTableWidgetConfig } from "../dashboard/widgetAddDefaults";
 import { TraceTimeline, fmtCN } from "./MessageItemTrace";
 
 export type MessageOnboardingHighlight = {
@@ -77,10 +78,16 @@ function MessageItem(props: { message: any; onboardingHighlight?: MessageOnboard
   const onAddChart = async () => {
     if (!echartsData) return;
     await maybeFinishGuide(async () => {
+      const cfg = buildChartWidgetConfig({
+        sqlFence: sql?.data,
+        echartsData,
+        datatableData,
+        messageContent: m.content ?? "",
+      });
       await addWidget({
         type: "chart",
         data: {},
-        config: { sql: sql?.data ?? "", echarts: echartsData },
+        config: cfg,
         layout: { w: 6, h: 8 },
       });
     });
@@ -90,10 +97,16 @@ function MessageItem(props: { message: any; onboardingHighlight?: MessageOnboard
   const onAddTable = async () => {
     if (!datatableData) return;
     await maybeFinishGuide(async () => {
+      const cfg = buildTableWidgetConfig({
+        sqlFence: sql?.data,
+        datatableData,
+        messageContent: m.content ?? "",
+        echartsData,
+      });
       await addWidget({
         type: "table",
         data: {},
-        config: { sql: sql?.data ?? "", table: datatableData },
+        config: cfg,
         layout: { w: 6, h: 8 },
       });
     });
