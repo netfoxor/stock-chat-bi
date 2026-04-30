@@ -18,6 +18,9 @@ COPY src ./src
 ARG VITE_API_BASE_URL=/api
 ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
 
+# 加入 CodeMirror 后 Rollup 打包内存峰值上升；slim 镜像默认堆偏小易 OOM 或大量 swap，表现为「rendering chunks」卡住
+ENV NODE_OPTIONS="--max-old-space-size=4096"
+
 RUN pnpm build
 
 FROM nginx:1.26-alpine
