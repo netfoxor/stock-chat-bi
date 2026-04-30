@@ -88,8 +88,18 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
   },
 
   updateWidget: async (id, patch) => {
+    const prev = get().widgets.find((x) => x.id === id);
     const res = await api.put<Widget>(`/dashboard/widgets/${id}`, patch);
-    set({ widgets: get().widgets.map((x) => (x.id === id ? res.data : x)) });
+    const raw = res.data.layout as Record<string, unknown> | undefined;
+    const layOk =
+      raw &&
+      typeof raw === "object" &&
+      ["x", "y", "w", "h"].every((k) => typeof raw[k] === "number" && Number.isFinite(raw[k] as number));
+    const merged: Widget =
+      layOk || !prev
+        ? res.data
+        : { ...res.data, layout: prev.layout ?? res.data.layout };
+    set({ widgets: get().widgets.map((x) => (x.id === id ? merged : x)) });
   },
 
   deleteWidget: async (id) => {

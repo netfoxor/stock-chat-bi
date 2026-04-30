@@ -1,5 +1,5 @@
 import { Button, Card, Input, Modal, Segmented, Select, Space, Typography, message } from "antd";
-import { SettingOutlined } from "@ant-design/icons";
+import { SettingOutlined, EditOutlined, DeleteOutlined } from "@ant-design/icons";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import GridLayout, { Layout, WidthProvider } from "react-grid-layout";
 import { api } from "../../api/client";
@@ -85,6 +85,7 @@ export function DashboardGrid() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [title, setTitle] = useState("");
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const skipTitleBlurCommitRef = useRef(false);
   const [configOpen, setConfigOpen] = useState(false);
   const [configWidget, setConfigWidget] = useState<any>(null);
   const [configTab, setConfigTab] = useState<ConfigModalTab>("sql");
@@ -144,9 +145,13 @@ export function DashboardGrid() {
     if (!allowed.has(configTab)) setConfigTab("sql");
   }, [configOpen, configWidget, configTab, modalTabOptions]);
 
-  const onLayoutChange = (l: Layout[]) => {
-    updateLayoutBatch(l).catch(() => void 0);
-  };
+  /** 禁用 onLayoutChange 写库：Modal 开关、内部重挂载、容器宽度抖动时会误触发并把多列压缩成单列。仅在拖动/缩放结束时持久化。 */
+  const persistLayout = useCallback(
+    (l: Layout[]) => {
+      updateLayoutBatch(l).catch(() => void 0);
+    },
+    [updateLayoutBatch],
+  );
 
   useEffect(() => {
     document.body.style.userSelect = dragging ? "none" : "";
@@ -181,13 +186,18 @@ export function DashboardGrid() {
         layout={layout}
         cols={12}
         rowHeight={30}
-        onLayoutChange={onLayoutChange}
         draggableHandle=".ant-card-head"
         draggableCancel="input,textarea,button,.ant-btn,.ant-input"
         onDragStart={() => setDragging(true)}
-        onDragStop={() => setDragging(false)}
+        onDragStop={(l: Layout[]) => {
+          setDragging(false);
+          persistLayout(l);
+        }}
         onResizeStart={() => setDragging(true)}
-        onResizeStop={() => setDragging(false)}
+        onResizeStop={(l: Layout[]) => {
+          setDragging(false);
+          persistLayout(l);
+        }}
       >
         {widgets.map((w) => (
           <div key={String(w.id)}>
@@ -195,45 +205,94 @@ export function DashboardGrid() {
               size="small"
               title={
                 <div
-                  onDoubleClick={() => {
-                    setEditingId(w.id);
-                    setTitle(w.title);
-                    setTimeout(() => inputRef.current?.focus(), 0);
+                  style={{
+                    cursor: "move",
+                    display: "flex",
+                    alignItems: "center",
+                    minWidth: 0,
+                    width: "100%",
                   }}
-                  style={{ cursor: "move" }}
                 >
                   {editingId === w.id ? (
                     <Input
                       ref={(el) => {
-                        // @ts-ignore
-                        inputRef.current = el?.input ?? null;
+                        inputRef.current = ((el as unknown) as { input?: HTMLInputElement | null } | null)?.input ?? null;
                       }}
                       size="small"
                       value={title}
                       onChange={(e) => setTitle(e.target.value)}
                       onBlur={() => {
-                        updateWidget(w.id, { title }).catch(() => void 0);
+                        if (skipTitleBlurCommitRef.current) return;
+                        const next = title.trim() || w.title;
+                        if (next !== w.title) {
+                          updateWidget(w.id, { title: next }).catch(() => void 0);
+                        }
                         setEditingId(null);
                       }}
-                      onPressEnter={() => {
-                        updateWidget(w.id, { title }).catch(() => void 0);
-                        setEditingId(null);
+                      onPressEnter={(e) => {
+                        e.preventDefault();
+                        (e.target as HTMLInputElement).blur();
                       }}
-                      style={{ width: 240 }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Escape") {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          skipTitleBlurCommitRef.current = true;
+                          setTitle(w.title);
+                          setEditingId(null);
+                          window.setTimeout(() => {
+                            skipTitleBlurCommitRef.current = false;
+                          }, 0);
+                        }
+                      }}
+                      style={{ flex: 1, minWidth: 0, width: "100%" }}
                     />
                   ) : (
-                    <Typography.Text ellipsis style={{ maxWidth: 260, display: "inline-block" }}>
-                      {w.title}
-                    </Typography.Text>
+                    <div
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 2,
+                        minWidth: 0,
+                        maxWidth: "100%",
+                      }}
+                    >
+                      <Typography.Text
+                        ellipsis={{ tooltip: w.title }}
+                        style={{ margin: 0, minWidth: 0, flexShrink: 1 }}
+                      >
+                        {w.title}
+                      </Typography.Text>
+                      <Button
+                        type="text"
+                        size="small"
+                        icon={<EditOutlined />}
+                        title="编辑标题"
+                        aria-label="编辑标题"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setEditingId(w.id);
+                          setTitle(w.title);
+                          setTimeout(() => {
+                            inputRef.current?.focus();
+                            inputRef.current?.select?.();
+                          }, 0);
+                        }}
+                        style={{ flexShrink: 0, paddingInline: 4 }}
+                      />
+                    </div>
                   )}
                 </div>
               }
               extra={
-                <Space>
+                <Space size={4}>
                   <Button
                     size="small"
                     icon={<SettingOutlined />}
-                    onClick={() => {
+                    title="组件配置"
+                    aria-label="组件配置"
+                    onClick={(e) => {
+                      e.stopPropagation();
                       const cfg = w.config ?? {};
                       setConfigWidget(w);
                       setConfigTab("sql");
@@ -252,9 +311,17 @@ export function DashboardGrid() {
                       setConfigOpen(true);
                     }}
                   />
-                  <Button size="small" danger onClick={() => deleteWidget(w.id).catch(() => void 0)}>
-                    删除
-                  </Button>
+                  <Button
+                    size="small"
+                    danger
+                    icon={<DeleteOutlined />}
+                    title="删除组件"
+                    aria-label="删除组件"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      deleteWidget(w.id).catch(() => void 0);
+                    }}
+                  />
                 </Space>
               }
               bodyStyle={{ flex: 1, minHeight: 0, padding: 8, display: "flex", flexDirection: "column" }}
