@@ -76,13 +76,12 @@ function MessageItem(props: { message: any; onboardingHighlight?: MessageOnboard
 
   const onAddChart = async () => {
     if (!echartsData) return;
-    const layout = { i: "new", x: 0, y: Infinity, w: 6, h: 8 };
     await maybeFinishGuide(async () => {
       await addWidget({
         type: "chart",
         data: {},
         config: { sql: sql?.data ?? "", echarts: echartsData },
-        layout,
+        layout: { w: 6, h: 8 },
       });
     });
     antdMessage.success("图表已添加到大屏");
@@ -90,13 +89,12 @@ function MessageItem(props: { message: any; onboardingHighlight?: MessageOnboard
 
   const onAddTable = async () => {
     if (!datatableData) return;
-    const layout = { i: "new", x: 0, y: Infinity, w: 6, h: 8 };
     await maybeFinishGuide(async () => {
       await addWidget({
         type: "table",
         data: {},
         config: { sql: sql?.data ?? "", table: datatableData },
-        layout,
+        layout: { w: 6, h: 8 },
       });
     });
     antdMessage.success("表格已添加到大屏");

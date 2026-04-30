@@ -83,7 +83,25 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
 
   addWidget: async (w) => {
     const did = get().activeDashboardId;
-    const res = await api.post<Widget>("/dashboard/widgets", { ...w, dashboard_id: did });
+    const existing = get().widgets;
+
+    const raw = (w.layout && typeof w.layout === "object" ? w.layout : {}) as Record<string, unknown>;
+    const lw = typeof raw.w === "number" && Number.isFinite(raw.w) ? raw.w : 6;
+    const lh = typeof raw.h === "number" && Number.isFinite(raw.h) ? raw.h : 8;
+
+    let maxBottom = 0;
+    for (const ww of existing) {
+      const lay = ww.layout as Record<string, unknown> | null | undefined;
+      if (!lay || typeof lay !== "object") continue;
+      const y = typeof lay.y === "number" && Number.isFinite(lay.y) ? lay.y : 0;
+      const hh = typeof lay.h === "number" && Number.isFinite(lay.h) ? lay.h : 8;
+      maxBottom = Math.max(maxBottom, y + hh);
+    }
+
+    const layout: Record<string, unknown> = { ...raw, x: 0, y: maxBottom, w: lw, h: lh };
+    delete layout.i;
+
+    const res = await api.post<Widget>("/dashboard/widgets", { ...w, dashboard_id: did, layout });
     set({ widgets: [...get().widgets, res.data] });
   },
 
@@ -109,6 +127,13 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
 
   updateLayoutBatch: async (layout) => {
     await api.put("/dashboard/layout", { layout });
+    set((state) => ({
+      widgets: state.widgets.map((w) => {
+        const item = layout.find((li: { i?: string }) => String(li?.i ?? "") === String(w.id));
+        if (!item) return w;
+        return { ...w, layout: { ...(w.layout && typeof w.layout === "object" ? w.layout : {}), ...item } };
+      }),
+    }));
   },
 }));
 
