@@ -22,15 +22,25 @@ function MessageItem(props: { message: any; onboardingHighlight?: MessageOnboard
   const tableBtnRef = useRef<HTMLButtonElement | null>(null);
 
   const { cleanMarkdown, blocks } = useMemo(() => extractSpecialBlocks(m.content ?? ""), [m.content]);
+  const viz = m.extra?.viz as { echarts?: unknown; datatable?: unknown } | undefined;
+  const parsed = m.extra?.parsed as Record<string, unknown> | undefined;
   const echarts = blocks.find((b) => b.kind === "echarts");
   const datatable = blocks.find((b) => b.kind === "datatable");
+  const echartsData =
+    echarts?.data ??
+    viz?.echarts ??
+    (m.content_type === "chart" && parsed != null ? parsed : undefined);
+  const datatableData =
+    datatable?.data ??
+    viz?.datatable ??
+    (m.content_type === "table" && parsed != null ? parsed : undefined);
   const sql = blocks.find((b) => b.kind === "sql") as any;
 
   useLayoutEffect(() => {
     if (!hl?.onHoleRect) return;
 
     const node: HTMLElement | null =
-      hl.kind === "chart" && echarts ? chartBtnRef.current : hl.kind === "table" && datatable ? tableBtnRef.current : null;
+      hl.kind === "chart" && echartsData ? chartBtnRef.current : hl.kind === "table" && datatableData ? tableBtnRef.current : null;
 
     if (!node) {
       hl.onHoleRect(null);
@@ -50,7 +60,7 @@ function MessageItem(props: { message: any; onboardingHighlight?: MessageOnboard
       window.removeEventListener("resize", report);
       hl.onHoleRect?.(null);
     };
-  }, [hl, echarts, datatable]);
+  }, [hl, echartsData, datatableData]);
 
   const maybeFinishGuide = async (fn: () => Promise<void>) => {
     await fn();
@@ -65,13 +75,13 @@ function MessageItem(props: { message: any; onboardingHighlight?: MessageOnboard
   };
 
   const onAddChart = async () => {
-    if (!echarts) return;
+    if (!echartsData) return;
     const layout = { i: "new", x: 0, y: Infinity, w: 6, h: 8 };
     await maybeFinishGuide(async () => {
       await addWidget({
         type: "chart",
         data: {},
-        config: { sql: sql?.data ?? "", echarts: echarts.data },
+        config: { sql: sql?.data ?? "", echarts: echartsData },
         layout,
       });
     });
@@ -79,13 +89,13 @@ function MessageItem(props: { message: any; onboardingHighlight?: MessageOnboard
   };
 
   const onAddTable = async () => {
-    if (!datatable) return;
+    if (!datatableData) return;
     const layout = { i: "new", x: 0, y: Infinity, w: 6, h: 8 };
     await maybeFinishGuide(async () => {
       await addWidget({
         type: "table",
         data: {},
-        config: { sql: sql?.data ?? "", table: datatable.data },
+        config: { sql: sql?.data ?? "", table: datatableData },
         layout,
       });
     });
@@ -132,24 +142,24 @@ function MessageItem(props: { message: any; onboardingHighlight?: MessageOnboard
         <MarkdownView content={cleanMarkdown || m.content || ""} />
       </div>
 
-      {echarts && (
+      {!!echartsData && (
         <div style={{ marginTop: 12, position: "relative" }}>
           <div style={{ position: "absolute", right: 0, top: 0, zIndex: hl?.kind === "chart" ? 2 : 1 }}>
             <Button size="small" type="primary" ref={chartBtnRef} onClick={() => void onAddChart()}>
               添加到大屏
             </Button>
           </div>
-          <InlineECharts option={echarts.data} />
+          <InlineECharts option={echartsData} height={360} />
         </div>
       )}
-      {datatable && (
+      {!!datatableData && (
         <div style={{ marginTop: 12, position: "relative" }}>
           <div style={{ position: "absolute", right: 0, top: 0, zIndex: hl?.kind === "table" ? 2 : 1 }}>
             <Button size="small" type="primary" ref={tableBtnRef} onClick={() => void onAddTable()}>
               添加到大屏
             </Button>
           </div>
-          <InlineDataTable value={datatable.data} />
+          <InlineDataTable value={datatableData} />
         </div>
       )}
     </Card>

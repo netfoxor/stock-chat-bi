@@ -4,7 +4,3 @@ numpy>=1.24
 tabulate>=0.9           # pandas.to_markdown 依赖
 SQLAlchemy>=2.0
 statsmodels>=0.14
-# 前端：
-chainlit>=1.3           # 自带 markdown / 流式 / CustomElement（承载 ECharts）+ Data Layer 历史
-aiosqlite>=0.19         # Chainlit SQLAlchemyDataLayer 用的 SQLite 异步驱动（聊天历史持久化）
-# 图表在前端由 ECharts 渲染（public/elements/EChart.jsx 从 CDN 加载 echarts），后端无需额外依赖

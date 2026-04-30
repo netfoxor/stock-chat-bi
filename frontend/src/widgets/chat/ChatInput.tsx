@@ -1,23 +1,34 @@
 import { Button, Input, Space } from "antd";
-import { type LegacyRef, useEffect, useState } from "react";
+import { type LegacyRef, useEffect, useRef, useState } from "react";
 
 export function ChatInput(props: {
   onSend: (text: string) => Promise<void>;
   disabled?: boolean;
   /** 新手引导：预填文案 */
   presetText?: string | null;
+  /** 从外部一键填入候选问题（如新会话占位示例）；按 nonce 递增触发，不占位引导 */
+  quickFill?: { nonce: number; text: string } | null;
   /** 仅允许点击发送时使用 */
   onboardingInputReadOnly?: boolean;
   sendButtonRef?: LegacyRef<HTMLAnchorElement | HTMLButtonElement>;
 }) {
   const [value, setValue] = useState("");
   const [sending, setSending] = useState(false);
+  const lastQuickNonceRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (props.presetText != null && props.presetText !== "") {
       setValue(props.presetText);
     }
   }, [props.presetText]);
+
+  useEffect(() => {
+    const q = props.quickFill;
+    if (q == null) return;
+    if (lastQuickNonceRef.current === q.nonce) return;
+    lastQuickNonceRef.current = q.nonce;
+    setValue(q.text);
+  }, [props.quickFill]);
 
   const send = async () => {
     const text = value.trim();

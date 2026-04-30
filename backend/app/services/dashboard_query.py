@@ -27,7 +27,7 @@ def _sync_mysql_url(aiomysql_url: str) -> str:
 def prepare_stock_env(sync_database_url: str) -> None:
     """在 worker 线程里调用前先设置环境变量。"""
     _ensure_nanobot_path()
-    os.environ.setdefault("STOCK_DATABASE_URL", _sync_mysql_url(sync_database_url))
+    os.environ.setdefault("DATABASE_URL", _sync_mysql_url(sync_database_url))
 
 
 def _normalize_sql_from_json_storage(sql: str) -> str:
@@ -43,7 +43,16 @@ def _normalize_sql_from_json_storage(sql: str) -> str:
     return s.strip()
 
 
-def run_dashboard_query(*, sql: str, limit: int, include_echarts: bool, database_url: str) -> dict[str, Any]:
+def run_dashboard_query(
+    *,
+    sql: str,
+    limit: int,
+    include_echarts: bool,
+    database_url: str,
+    transform_chart: str = "",
+    transform_table: str = "",
+    transform_params: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """
     执行只读查询，返回 Ant Design Table 结构；可选附带 stock_core 生成的 ECharts option。
     """
@@ -88,4 +97,14 @@ def run_dashboard_query(*, sql: str, limit: int, include_echarts: bool, database
             opt, label = core.build_stock_echart(df, max_rows=max_rows_chart)
             result["echarts"] = opt
             result["echarts_label"] = label
+
+    from app.services.dashboard_transforms import apply_dashboard_named_transforms  # noqa: PLC0415
+
+    result = apply_dashboard_named_transforms(
+        result=result,
+        transform_chart=transform_chart,
+        transform_table=transform_table,
+        transform_params=transform_params,
+        include_echarts=include_echarts,
+    )
     return result

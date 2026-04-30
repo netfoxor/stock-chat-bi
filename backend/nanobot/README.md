@@ -1,164 +1,105 @@
 # 股票查询助手（nanobot 版）
 
-基于 [nanobot-ai](https://pypi.org/project/nanobot-ai/) + [Chainlit](https://chainlit.io/) + 通义千问的 A 股自然语言查询 / 分析助手。
+基于 [nanobot-ai](https://pypi.org/project/nanobot-ai/) 与通义千问（或其它 OpenAI-compatible 网关）的 A 股自然语言查询 / 分析助手。
 
-本地 SQLite 存 A 股日线数据，LLM 通过三类能力回答问题：
+**Web 主站**走后端 FastAPI（`app/services/nanobot_service.py` → `stock_bot.py`），仓库内不再包含 Chainlit 独立前端。
 
-- **本地 SQL 查询** —— 工具 `exc_sql`，结果会自动渲染成表格 + ECharts 交互图表
-- **ARIMA 收盘价预测** —— skill `arima-forecast`，用 `exec` 跑 `statsmodels`
-- **布林带超买 / 超卖检测** —— skill `bollinger`，用 `exec` 跑脚本
+能力概览：
+
+- **SQL 查询** —— 工具 `exc_sql`，结果可渲染为表格与 ECharts（主站使用语言标签 `echarts` 的 fenced 块）
+- **ARIMA 收盘价预测** —— skill `arima-forecast`，LLM 通过 `exec` 调用脚本
+- **布林带超买 / 超卖检测** —— skill `bollinger`，同上
 
 ---
 
-## 🚀 启动（这就是你忘的命令）
+## 启动
 
 ```powershell
-# 1. 激活虚拟环境（随意用你自己的）
-# 2. 装依赖（第一次运行需要）
 pip install -r requirements.txt
-
-# 3. 生成 Chainlit 登录 Cookie 签名密钥（首次部署只需一次）
-chainlit create-secret
-#    把输出的那串 CHAINLIT_AUTH_SECRET="..." 复制进 .env
-
-# 4. 配环境变量（统一在 backend/.env 里配置）
 $env:DASHSCOPE_API_KEY = "sk-xxxxxxxxxxxxxxxxxxxxxxxx"
-$env:CHAINLIT_AUTH_SECRET = "上一步生成的那串"
-
-# 5. 启动 Chainlit 前端（热重载）
-chainlit run app_chainlit.py -w
+# 推荐：使用 backend/.env（复制 backend/.env.example），后端与 CLI 都会加载
 ```
 
-默认监听 **http://localhost:8000**。**登录账号默认 `admin` / `admin`**，
-可用 `CHAINLIT_USERNAME` / `CHAINLIT_PASSWORD` 覆盖。
-
-> Linux / macOS 把 `$env:X = "..."` 改成 `export X=...` 即可。
-> 推荐直接用 `backend/.env`（复制 `backend/.env.example`），后端会显式加载该文件，不用每次 export。
-
-### 💬 聊天历史
-
-侧栏自带历史管理，无需额外配置：
-
-| 功能 | 操作位置 |
-|---|---|
-| 新建对话 | 侧栏左上角 **New Chat** |
-| 切换历史 | 点击侧栏任一历史条目（自动恢复对话上下文） |
-| 删除单条历史 | 历史条目右侧的 **⋮** 菜单 → Delete |
-| 全文搜索历史 | 侧栏顶部的搜索框 |
-
-历史数据持久化在 `memory/chainlit.db`（SQLite），可用 `CHAINLIT_DB_PATH` 环境变量覆盖路径。删除就是物理删除（连同消息、工具调用 trace、图表元素一起清掉）。
-
-### 其他启动方式
-
 ```powershell
-# CLI 单轮问答（不起前端，调试好用）
+# 单轮问答
 python stock_bot.py "用 ARIMA 预测贵州茅台未来 10 个交易日的收盘价"
 
-# CLI 交互式 REPL
+# 交互式 REPL
 python stock_bot.py
 
-# Docker / 1Panel 离线部署
-# 详见 deploy/README.md
+# 生产部署（含前端）
+# 在仓库根目录：docker compose up -d --build
+# 说明见 deploy/README.md
 ```
+
+Linux / macOS：把 `$env:X = "..."` 换成 `export X=...`。
 
 ---
 
-## 📂 目录结构
+## 目录结构
 
 ```
 nanobot/
-├── app_chainlit.py          # Chainlit 入口（仅独立 Web UI 时使用；主站走 FastAPI 不需要）
-├── trace_ctx.py             # 执行轨迹上下文（FastAPI 流式 trace 依赖）
-├── trace_hook.py            # LLM 调用写入 trace_ctx
-├── stock_bot.py             # nanobot AgentLoop 组装 + CLI 入口
-├── stock_core.py            # 底层：SQL 守卫 / 画图 / run_query 等（与 FastAPI 大屏共用）
-├── self_heal_hook.py        # 工具失败时的自动重试 / 修复钩子
-├── chainlit_data.py         # Chainlit 聊天历史持久化（SQLite + SQLAlchemyDataLayer）
-├── stock_tools/             # 常驻 in-process 工具（目前只有 exc_sql）
+├── trace_ctx.py             # 执行轨迹（FastAPI 流式 trace）
+├── trace_hook.py
+├── stock_bot.py             # AgentLoop 组装 + CLI 入口
+├── stock_core.py            # SQL 守卫 / 图表 JSON / run_query（与后端大屏共用）
+├── self_heal_hook.py
+├── stock_tools/
 │   ├── __init__.py
 │   └── exc_sql.py
-├── skills/                  # LLM 按需读取的技能包（SKILL.md + scripts/exec）
+├── orchestrator/
+├── skills/
 │   ├── arima-forecast/
 │   ├── bollinger/
 │   └── stock-sql/
-├── public/elements/         # Chainlit CustomElement（仅 `chainlit run app_chainlit.py` 需要）
-│   ├── EChart.jsx
-│   └── ToolTrace.jsx
-├── charts/                  # [运行时] 工具落地 `chart:charts/*.json`，可删、会再生成（见 .gitignore）
-├── data/                    # [可选] 未配置 MySQL 时 SQLite 数据目录（见 stock_core；通常线上用 DATABASE_URL）
-├── memory/                  # [运行时] `chainlit.db` 等；勿把运行中 jsonl 当源码（见 .gitignore）
-├── sessions/                # [运行时] 会话快照 *.jsonl，可删（见 .gitignore）
-├── .chainlit/config.toml    # Chainlit UI 配置；translations 等由 CLI 按需拉取，勿手改
+├── charts/                  # [运行时] 脚本可选落盘 *.json（见 .gitignore）
+├── sessions/                # [运行时] 会话 *.jsonl
+├── memory/                  # [运行时] 其它缓存
 ├── config.json
 ├── requirements.txt
-├── Dockerfile               # 独立打包「Chainlit + nanobot」；与 backend/Dockerfile（FastAPI）不同
-├── docker-compose.yml
-├── chainlit.md
+├── Dockerfile               # 仅依赖校验/调试；生产用仓库根 compose 构建 backend
 ├── AGENTS.md
 └── deploy/
-    ├── README.md            # 1Panel 离线部署（Chainlit 镜像）
-    └── build_and_save.ps1
+    ├── README.md
+    └── build_and_save.ps1   # 已弃用，会提示改用根目录 compose
 ```
 
-> **说明**：上表中带 **\[运行时\]** 的目录不要当业务源码维护；仓库内不应长期保留 `*.jsonl`、落盘图表 JSON，避免与「真实代码」混淆。主站聊天走后端 `app/services/nanobot_service.py → stock_bot`，**不要求** Chainlit；需要独立 Web UI 时再使用 `app_chainlit.py`。
+> **\[运行时\]** 目录勿当业务源码长期提交；图表 JSON、jsonl 可随时删、会再生成。
 
 ---
 
-## 🔑 环境变量
+## 环境变量
 
 | 变量 | 必填 | 说明 |
 |---|---|---|
-| `DASHSCOPE_API_KEY` | ✅ | 阿里云 DashScope（通义千问）API Key |
-| `CHAINLIT_AUTH_SECRET` | ✅ | Chainlit 登录 Cookie / JWT 签名密钥，运行 `chainlit create-secret` 生成 |
-| `CHAINLIT_USERNAME` | | 登录用户名，默认 `admin` |
-| `CHAINLIT_PASSWORD` | | 登录密码，默认 `admin`（**对外暴露务必改掉**） |
-| `CHAINLIT_DB_PATH` | | 聊天历史 SQLite 路径，默认 `nanobot/memory/chainlit.db` |
-| `QWEN_AGENT_MODEL` | | 覆盖 `config.json` 里的模型名，默认 `qwen3.6-plus-2026-04-02` |
-| `STOCK_DB_PATH` | | 覆盖 SQLite 库路径，默认 `nanobot/data/stock_prices_history.db` |
-| `HOST_PORT` | | 仅 docker-compose 用，映射到宿主机的端口（默认 `10001`） |
+| `DASHSCOPE_API_KEY` | 网关二选一 | 阿里云 DashScope（通义） |
+| `OPENAI_API_KEY` + `OPENAI_BASE_URL` | 同上 | OpenAI 兼容网关 |
+| `DATABASE_URL` | 是 | MySQL，`mysql+aiomysql://…`，与 FastAPI、`exc_sql`、skill 脚本同源 |
+| `QWEN_AGENT_MODEL` | | 覆盖 `config.json` 模型名 |
 
 完整模板见 `backend/.env.example`。
 
 ---
 
-## 💬 示例问题
-
-启动后直接问就行：
+## 示例问题
 
 - 查询贵州茅台 2025 年全年日线
-- 统计 2025 年 4 月广发证券的日均成交量
-- 对比 2025 年中芯国际和贵州茅台的涨跌幅
-- 用 ARIMA 预测五粮液未来 10 个交易日的收盘价
-- 检测广发证券 2025-01-01 到 2025-12-31 的超买超卖
-
-LLM 会按需调用 `exc_sql` 或 skill 脚本，**前端会把表格和 ECharts 图表直接渲染到消息流**，工具调用的原始输入输出在每条消息里以折叠块形式保留，便于 debug。
+- 统计 2025 年 4 月广发证券日均成交量
+- 用 ARIMA 预测五粮液未来 10 个交易日收盘价
+- 检测广发证券某一区间的超买超卖
 
 ---
 
-## 🧱 技术要点
+## 技术要点
 
-- **nanobot AgentLoop**：自带工具调度、`skills/` 目录自动发现（`SkillsLoader`）、会话记忆。
-- **Chainlit CustomElement**：`EChart.jsx` 通过 CDN 懒加载 `echarts@5.5.1`，并监听 `<html>` 上的 `class="dark"` / `data-theme` 变化，**自动跟随 Chainlit 主题切换**。
-- **self-heal hook**：`exec` 失败时自动捕获 stderr、回传给 LLM 让它调整参数重试（最多 2 次，避免死循环）。
-- **数据库**：SQLite 静态数据（~1 MB），`trade_date` 列是 `YYYY-MM-DD` 字符串（注意：**绝对不要写 `20250101` 这种无连字符格式**，详见 `AGENTS.md`）。
-
----
-
-## 🐳 Docker 部署
-
-本地开发不需要 Docker。若要部署到服务器（离线环境 / 1Panel 面板），见：
-
-- [`deploy/README.md`](./deploy/README.md) —— 完整的 1Panel 离线部署步骤（构建、打包、导入、编排）
-
-快速自测：
-
-```powershell
-docker compose up -d --build
-# 浏览器访问 http://localhost:10001
-```
+- **AgentLoop**：工具调度、`skills/` 自动发现、会话记忆；编排见 `orchestrator/`。
+- **图表**：脚本输出 fenced JSON（围栏语言标签 `echarts`）；主站前端解析渲染。`charts/` 目录仅备份 option，不向用户输出旧式 `chart:` 行。
+- **self-heal**：`exec` 失败时捕获 stderr 供 LLM 重试（有次数上限）。
+- **数据库**：MySQL，`trade_date` 为 `YYYY-MM-DD`（见 `skills/stock-sql/SKILL.md`）。
 
 ---
 
-## ⚠️ 免责声明
+## 免责声明
 
 所有预测与技术指标仅供学习参考，**不构成投资建议**。

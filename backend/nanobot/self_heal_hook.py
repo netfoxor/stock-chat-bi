@@ -44,10 +44,11 @@ class HealPattern:
 
 
 _FIX_EXAMPLE = (
-    "✅ 正确调用示例（本工作区根目录就是 `nanobot/`，脚本用相对路径、无引号、不设 working_dir）：\n"
+    "✅ 正确调用示例（本工作区根目录就是 `nanobot/`，脚本用相对路径、无引号、不设 working_dir。"
+    "**Linux/Docker 无 `python` 时请用 `python3`**）：\n"
     "```\n"
-    "python skills/arima-forecast/scripts/forecast.py --ts-code 600519.SH --n 10\n"
-    "python skills/bollinger/scripts/detect.py --ts-code 600519.SH --start 2024-01-01 --end 2024-12-31\n"
+    "python3 skills/arima-forecast/scripts/forecast.py --ts-code 600519.SH --n 10\n"
+    "python3 skills/bollinger/scripts/detect.py --ts-code 600519.SH --start 2024-01-01 --end 2024-12-31\n"
     "```\n"
 )
 
@@ -73,9 +74,25 @@ _EXEC_ERROR_SIGNATURES: tuple[HealPattern, ...] = (
         ),
     ),
     HealPattern(
+        key="python-interpreter-command-not-found",
+        patterns=(
+            re.compile(r"python:\s*command\s+not\s+found", re.I),
+            re.compile(
+                r"bash:\s+(?:line\s+\d+:\s+)?python:\s*(?:command\s+not\s+found|not\s+found)",
+                re.I,
+            ),
+        ),
+        hint=(
+            "❌ Shell 里找不到 **`python`** 命令（常见于 **Linux/Docker**：只安装了 **`python3`**）。\n"
+            "🛠 自愈步骤：把 **`python`** 全部改成 **`python3`**，路径与参数不变；不要改 working_dir。\n\n"
+            + _FIX_EXAMPLE
+        ),
+    ),
+    HealPattern(
         key="python-file-not-found",
         patterns=(
             re.compile(r"python: can't open file", re.I),
+            re.compile(r"python3: can't open file", re.I),
             re.compile(r"No such file or directory.*\.py", re.I),
         ),
         hint=(

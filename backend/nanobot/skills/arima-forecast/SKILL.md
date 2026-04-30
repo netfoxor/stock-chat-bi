@@ -1,20 +1,20 @@
 ---
 name: arima-forecast
-description: 用 ARIMA(5,1,5) 对指定 A 股股票预测未来 1~60 个交易日的收盘价，输出预测表与 ECharts 图表（含 95% 置信带）。
+description: 用 ARIMA(5,1,5) 对指定 A 股股票预测未来 1~60 个交易日的收盘价，stdout 输出 datatable（Ant Design Table JSON）与 echarts 围栏（含 95% 置信带）。
 metadata: {"nanobot":{"emoji":"📈","requires":{"bins":["python"]}}}
 ---
 
 # ARIMA 收盘价预测 Skill
 
 当用户问"**未来 n 个交易日收盘价**"、"**股价预测**"、"**趋势外推**"等问题时使用本 skill。
-实际拟合与绘图由独立 Python 脚本完成，一次调用 = 一个子进程，**脚本崩溃不会影响主程序**。
+脚本经 `stock_core` 读库：与 `exc_sql` / stock-sql 共用 **`DATABASE_URL`**（连 MySQL `stock_daily`）。
 
 ## 运行（严格按此格式，否则会踩 shell 引号陷阱）
 
 用 `exec` 工具执行：
 
 ```
-python skills/arima-forecast/scripts/forecast.py --ts-code 600519.SH --n 10
+python3 skills/arima-forecast/scripts/forecast.py --ts-code 600519.SH --n 10
 ```
 
 **三条硬规定**（违反必挂）：
@@ -26,12 +26,13 @@ python skills/arima-forecast/scripts/forecast.py --ts-code 600519.SH --n 10
 参数：
 
 - `--ts-code`（必填）：Tushare 代码，如 `600519.SH`、`000858.SZ`、`688981.SH`
-- `--n`（必填）：预测交易日数，1~60
+- `--n`（必填）：预测 **交易日** 数，1~60。**经编排路由时**会从自然语言推算 `n`：如「一月 / 两个月 / 3个月」按约 **每月 22 个交易日**换算（封顶 60）；「N 个交易日」「N 天」「N 周」按字面（周≈每周 5 个交易日）。避免出现只有数字、不带「天 / 周 / 月」等上下文的情况，否则会与「一个月」里的 「1」产生歧义。
 
 输出约定（非常重要）：
 
-- **stdout** 是完整 markdown：包含预测表（forecast_date / forecast_close / ci_lower_95 / ci_upper_95）以及图表占位 `![ARIMA 预测](chart:charts/arima_xxx.json)`。
-- **必须把 stdout 原样转发给用户**，包括那条 `chart:` 图表 markdown，前端会自动渲染。
+- **stdout**：一行简述 + **` ```echarts` 块在前**、` ```datatable` 在后（若有 MySQL `TEXT` 长度截断，优先保住图表围栏）；结构与 `exc_sql` 同源。
+- 脚本仍向 `charts/` 落盘一份 option JSON（不参与聊天渲染）。
+- **必须把 stdout 原样转发给用户**；勿删减 fenced 块。
 - 非零 exit code / stderr 提示错误：把错误原因解释给用户，并建议修正（换代码、缩小 n、检查数据库等）。
 
 ## 出错自愈清单（Self-Heal）
@@ -40,19 +41,12 @@ python skills/arima-forecast/scripts/forecast.py --ts-code 600519.SH --n 10
 | ------------------------------------------------------ | -------------------------------------------------------------------- |
 | `can't open file '...scripts\"...\"'` / `Errno 22`      | 触犯了引号规则。去掉 `working_dir` 参数 + 去掉所有引号，重试一次      |
 | `No such file or directory ... forecast.py`             | 路径写错，按模板 `skills/arima-forecast/scripts/forecast.py` 再试     |
-| `错误：数据库文件未找到`                                | 数据缺失，**不要重试**，如实告诉用户                                  |
+| `错误：未配置 DATABASE_URL` / MySQL 连接失败 | 与后端共用 **`DATABASE_URL`**；确认进程能读到 `.env`，且库中有 `stock_daily` |
 | `错误：近一年数据仅 N 条，不足 80 条`                    | 样本不够，换成交投活跃的大盘股（如 `600519.SH`）再试                 |
 | `错误：预测天数超出范围`                                | `--n` 必须 1~60，修正后重试                                           |
 | `ARIMA 拟合失败`                                        | 换一只股票或缩短样本，还不行就告诉用户并停止                         |
 
 > ⚠️ 如果同一个错误你已经试过 2 次，**立刻停止**，把原始错误返回给用户。
-
-## 常见股票代码
-
-- 贵州茅台 `600519.SH`
-- 五粮液 `000858.SZ`
-- 广发证券 `000776.SZ`
-- 中芯国际 `688981.SH`
 
 ## 解读要点
 

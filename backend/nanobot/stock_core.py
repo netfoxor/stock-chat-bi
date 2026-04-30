@@ -8,7 +8,7 @@ stock_core —— 股票助手共享底层
   2. `skills/*/scripts/*.py`            —— exec tool 调起的一次性脚本
 
 提供：
-  * DB 路径 / CHARTS_DIR / 业务常量
+  * DB 连接（仅 MySQL：**环境变量 `DATABASE_URL`**，同步侧自动将 mysql+aiomysql 换成 pymysql）
   * SQL 守卫、markdown 构建
   * 智能 ECharts option builders（K 线 / 折线 / ARIMA / 布林带）
   * 数据加载（日线区间、近一年）
@@ -18,10 +18,11 @@ stock_core —— 股票助手共享底层
 from __future__ import annotations
 
 import json
+import math
 import os
 import sys
 import time
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -35,18 +36,43 @@ import pandas as pd
 # 不管从哪里 import 进来，WORKSPACE 永远指向 nanobot/
 WORKSPACE = Path(__file__).resolve().parent
 
-# 数据库连接：
-# 旧版使用 SQLite 文件（STOCK_DB_PATH），现统一改为 MySQL（STOCK_DATABASE_URL / DATABASE_URL）。
-# 为兼容迁移期，可仍接受 STOCK_DB_PATH，但优先使用 MySQL 连接串。
-_DEFAULT_SQLITE_DB = WORKSPACE / "data" / "stock_prices_history.db"
-DB_PATH = Path(os.environ.get("STOCK_DB_PATH", str(_DEFAULT_SQLITE_DB))).resolve()
-STOCK_DATABASE_URL = (
-    os.environ.get("STOCK_DATABASE_URL")
-    or os.environ.get("DATABASE_URL")
-    or ""
-).strip()
 CHARTS_DIR = WORKSPACE / "charts"
 CHARTS_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def get_database_url() -> str:
+    """当前进程下的数据库 URL；仅读取环境变量 **`DATABASE_URL`**。"""
+    return (os.environ.get("DATABASE_URL") or "").strip()
+
+
+def has_stock_database_access() -> bool:
+    """是否已配置 DATABASE_URL（不做文件探测、不接库验证）。"""
+    return bool(get_database_url())
+
+
+def load_backend_dotenv_if_empty() -> None:
+    """
+    供 exec 拉的 skill 脚本在子进程起步时调用：`nanobot/..` → `backend/.env`。
+    父进程已通过 allowed_env_keys 透传时使用不到；直接从命令行跑脚本时能补齐。
+    """
+    if get_database_url():
+        return
+    try:
+        from dotenv import load_dotenv  # type: ignore
+    except ImportError:
+        return
+    p = WORKSPACE.parent / ".env"
+    if p.is_file():
+        load_dotenv(p, override=False)
+
+
+def _normalize_sync_mysql_url(raw: str) -> str:
+    u = raw.strip()
+    if not u:
+        return ""
+    return u.replace("mysql+aiomysql://", "mysql+pymysql://").replace(
+        "mysql+asyncmy://", "mysql+pymysql://"
+    )
 
 ARIMA_ORDER = (5, 1, 5)
 MIN_ARIMA_OBS = 80
@@ -104,14 +130,14 @@ def build_result_markdown(df: pd.DataFrame) -> str:
 def _engine():
     # 延迟导入：skill script 冷启动时能省一点时间，且便于按需使用
     from sqlalchemy import create_engine
-    if STOCK_DATABASE_URL:
-        # 将异步驱动转换为同步驱动（pd.read_sql 仅支持同步 engine）
-        url = STOCK_DATABASE_URL
-        url = url.replace("mysql+aiomysql://", "mysql+pymysql://")
-        url = url.replace("mysql+asyncmy://", "mysql+pymysql://")
-        return create_engine(url, pool_pre_ping=True, pool_recycle=3600)
-    # 兼容：未配置 MySQL 时回退到 SQLite（主要用于本地旧数据排查）
-    return create_engine(f"sqlite:///{DB_PATH.as_posix()}", connect_args={"check_same_thread": False})
+
+    url = _normalize_sync_mysql_url(get_database_url())
+    if not url:
+        raise RuntimeError(
+            "DATABASE_URL 未设置：请在环境中配置 DATABASE_URL（MySQL），"
+            "与 FastAPI backend/.env 一致。"
+        )
+    return create_engine(url, pool_pre_ping=True, pool_recycle=3600)
 
 
 def load_stock_daily_range(ts_code: str, start: str, end: str) -> pd.DataFrame | None:
@@ -208,6 +234,101 @@ def compute_bollinger(close: pd.Series
     return mid, mid + BOLL_STD_MULT * std, mid - BOLL_STD_MULT * std
 
 
+def bollinger_series_for_viz(
+    ts_code: str,
+    start: str,
+    end: str,
+    *,
+    table_max_rows: int = 500,
+) -> dict[str, Any]:
+    """
+    布林带：日线序列 + ``build_boll_echart`` + Ant Design 表格载荷。
+    供 detect.py 与大屏命名转换共用；失败抛 ``ValueError``（中文）。
+    """
+    ts_code = (ts_code or "").strip().upper()
+    if not ts_code:
+        raise ValueError("缺少股票代码 ts_code")
+
+    try:
+        df = load_stock_daily_range(ts_code, start, end)
+    except Exception as e:  # noqa: BLE001
+        raise ValueError(f"数据库查询失败：{e}") from e
+    if df is None:
+        raise ValueError(f"未找到 {ts_code} 在 [{start}, {end}] 的日线数据。")
+    if len(df) < MIN_BOLL_ROWS:
+        raise ValueError(
+            f"{ts_code} 在 [{start}, {end}] 仅有 {len(df)} 条日线，"
+            f"不足 {MIN_BOLL_ROWS} 条，不足以计算布林带。"
+        )
+
+    try:
+        df = df.copy()
+        df["trade_date"] = pd.to_datetime(df["trade_date"])
+    except Exception as e:  # noqa: BLE001
+        raise ValueError(f"trade_date 解析失败：{e}") from e
+    df = df.sort_values("trade_date").reset_index(drop=True)
+
+    close = df["close"].astype(float)
+    mid, upper, lower = compute_bollinger(close)
+
+    valid = mid.notna()
+    overbought_mask = valid & (close > upper)
+    oversold_mask = valid & (close < lower)
+
+    signals = pd.DataFrame({
+        "trade_date": df["trade_date"].dt.strftime("%Y-%m-%d"),
+        "close": close.round(4),
+        "mid_ma20": mid.round(4),
+        "upper_2sigma": upper.round(4),
+        "lower_2sigma": lower.round(4),
+        "signal": [
+            "超买" if ob else ("超卖" if os_ else "")
+            for ob, os_ in zip(overbought_mask, oversold_mask)
+        ],
+    })
+
+    dates = [d.strftime("%Y-%m-%d") for d in df["trade_date"]]
+    close_l = round_list(close)
+    mid_l = round_list(mid)
+    upper_l = round_list(upper)
+    lower_l = round_list(lower)
+    ob_idx = [i for i, x in enumerate(overbought_mask.tolist()) if x]
+    os_idx = [i for i, x in enumerate(oversold_mask.tolist()) if x]
+
+    stock_name = str(df["stock_name"].iloc[-1]) if "stock_name" in df.columns else ts_code
+    option = build_boll_echart(
+        dates,
+        close_l,
+        mid_l,
+        upper_l,
+        lower_l,
+        ob_idx,
+        os_idx,
+        title=(
+            f"{safe_label(stock_name)} ({ts_code}) · 布林带 MA{BOLL_WINDOW}±{BOLL_STD_MULT:g}σ · "
+            f"{dates[0]} ~ {dates[-1]}"
+        ),
+    )
+
+    tab_payload, tab_truncated = dataframe_to_antd_table_payload(signals, max_rows=table_max_rows)
+    n_ob = int(overbought_mask.sum())
+    n_os = int(oversold_mask.sum())
+
+    return {
+        "option": option,
+        "table_payload": tab_payload,
+        "table_truncated": tab_truncated,
+        "n_overbought": n_ob,
+        "n_oversold": n_os,
+        "stock_name": safe_label(stock_name),
+        "ts_code": ts_code,
+        "start": start,
+        "end": end,
+        "trade_days": len(df),
+        "signals_total": len(signals),
+    }
+
+
 # --------------------------------------------------------------------------- #
 # ECharts 主题与共享工具
 # --------------------------------------------------------------------------- #
@@ -216,7 +337,7 @@ _PRICE_COLS = {"open", "high", "low", "close", "pre_close"}
 _VOLUME_COLS = {"vol", "volume"}
 _AMOUNT_COLS = {"amount", "turnover"}
 _PCT_COLS = {"pct_chg", "pct_change", "change_pct", "pctchg"}
-_CHANGE_COLS = {"change", "chg"}
+_CHANGE_COLS = {"change", "chg", "change_val"}
 _DATE_COLS = {"trade_date", "date", "datetime", "dt", "day"}
 
 COLOR_UP = "#ef4444"
@@ -321,13 +442,81 @@ def _moving_average(values: list, window: int) -> list:
     return out
 
 
-def save_echart_option(option: dict, prefix: str, *, label: str = "图表") -> str:
-    """落盘 JSON 到 charts/，返回 markdown 引用（chart: 前缀）。"""
+def sanitize_for_json(obj: Any) -> Any:
+    """NaN/Inf→null；numpy 标量→ Python 原生。供 ``json.dumps(..., allow_nan=False)`` / 浏览器 JSON.parse。"""
+    if obj is None:
+        return None
+    if isinstance(obj, dict):
+        return {str(k): sanitize_for_json(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [sanitize_for_json(v) for v in obj]
+    if isinstance(obj, (str, bool)):
+        return obj
+    if isinstance(obj, (np.integer,)):
+        return int(obj)
+    if isinstance(obj, (np.floating, float)):
+        x = float(obj)
+        if math.isnan(x) or math.isinf(x):
+            return None
+        return x
+    if isinstance(obj, int):
+        return obj
+    return obj
+
+
+def dumps_json_for_fence(obj: Any) -> str:
+    """紧凑单行 JSON（避免 MySQL messages.content TEXT 64KB 截断）；禁止 NaN 字面量。"""
+    return json.dumps(
+        sanitize_for_json(obj),
+        ensure_ascii=False,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
+
+
+def write_echart_asset(option: dict, prefix: str) -> str:
+    """落盘 JSON 到 charts/，返回相对路径 ``charts/xxx.json``（供附件/排查，不写入聊天正文）。"""
     filename = f"{prefix}_{int(time.time() * 1000)}.json"
     path = CHARTS_DIR / filename
     with path.open("w", encoding="utf-8") as f:
-        json.dump(option, f, ensure_ascii=False, separators=(",", ":"))
-    return f"![{label}](chart:charts/{filename})"
+        json.dump(sanitize_for_json(option), f, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+    return f"charts/{filename}"
+
+
+def format_echarts_fence(option: dict) -> str:
+    """Web 主站 MessageItem：语言标签 ``echarts`` 的 fenced 块；与 exc_sql 同为紧凑合法 JSON。"""
+    body = dumps_json_for_fence(option)
+    return f"```echarts\n{body}\n```"
+
+
+def dataframe_to_antd_table_payload(
+    df: pd.DataFrame,
+    *,
+    max_rows: int = 200,
+) -> tuple[dict, bool]:
+    """
+    Ant Design Table JSON，与 ``exc_sql`` 的 ``datatable`` 围栏一致：
+    ``{"columns":[{"title","dataIndex"}], "data":[dict,...]}``。
+    """
+    cols = [{"title": str(c), "dataIndex": str(c)} for c in df.columns.tolist()]
+    data = df.to_dict(orient="records")
+    for row in data:
+        for k, v in row.items():
+            if isinstance(v, (date, datetime)):
+                row[k] = v.isoformat() if hasattr(v, "isoformat") else str(v)
+    truncated = len(data) > max_rows
+    if truncated:
+        data = data[:max_rows]
+    return {"columns": cols, "data": data}, truncated
+
+
+def format_datatable_fence(payload: dict, *, truncation_note_rows: int | None = None) -> str:
+    """Web 主站：语言标签 ``datatable`` 的 fenced 块 + JSON（与 exc_sql 同源）。"""
+    body = dumps_json_for_fence(payload)
+    block = f"```datatable\n{body}\n```"
+    if truncation_note_rows is not None:
+        block = f"*（表格仅展示前 {truncation_note_rows} 行，已截断）*\n\n{block}"
+    return block
 
 
 # --------------------------------------------------------------------------- #

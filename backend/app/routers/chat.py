@@ -19,17 +19,47 @@ from app.models.user import User
 from app.schemas.chat import ChatStreamRequest
 from app.services.nanobot_service import ask
 
+# nanobot ExecTool 会在 stdout 末尾追加「Exit code: N」，污染 Markdown 并像多出一截正文
+_EXEC_EXIT_TAIL_RE = re.compile(r"\n+Exit code:\s*\d+\s*\Z", re.IGNORECASE)
+
+
+def strip_exec_stdout_trailer(text: str) -> str:
+    if not text:
+        return text
+    return _EXEC_EXIT_TAIL_RE.sub("", text.rstrip())
+
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 _SQL_FENCE_DETECT = re.compile(r"```sql\s*\n", re.IGNORECASE)
 _VIZ_FENCE_START = re.compile(r"```(?:echarts|datatable)\b", re.IGNORECASE)
 
-_FENCE_RE = re.compile(r"```(?P<lang>echarts|datatable)\n(?P<body>[\s\S]*?)\n```", re.IGNORECASE)
+# 与前端 extractSpecialBlocks 对齐：围栏可不在行首；闭合行为「换行 + ```」
+_VIZ_FENCE_RE = re.compile(
+    r"(?:^|\r?\n)```\s*(?P<lang>echarts|datatable)\s*\r?\n(?P<body>[\s\S]*?)\r?\n\s*```(?:\r?\n|$)",
+    re.IGNORECASE,
+)
 _MD_TABLE_RE = re.compile(
     r"(?P<table>(?:^\|.*\|\s*$\n){2,}(?:^\|.*\|\s*$\n?)*)",
     re.MULTILINE,
 )
+
+
+def _extract_viz_blocks(text: str) -> dict[str, Any]:
+    """提取所有 echarts / datatable 围栏；供 extra.viz，避免正文截断或前端解析失败。"""
+    out: dict[str, Any] = {}
+    for m in _VIZ_FENCE_RE.finditer(text or ""):
+        lang = (m.group("lang") or "").lower()
+        body = (m.group("body") or "").strip()
+        try:
+            data = json.loads(body)
+        except Exception:
+            continue
+        if lang == "echarts":
+            out["echarts"] = data
+        elif lang == "datatable":
+            out["datatable"] = data
+    return out
 
 
 def _parse_assistant_content(text: str) -> tuple[str, str, dict[str, Any] | None]:
@@ -39,11 +69,11 @@ def _parse_assistant_content(text: str) -> tuple[str, str, dict[str, Any] | None
     - content_type: text|chart|table
     - extra: 解析出的 JSON
     """
-    m = _FENCE_RE.search(text)
+    m = _VIZ_FENCE_RE.search(text)
     if not m:
         # 兜底：nanobot 可能输出纯 Markdown 表格/描述（没有 ```datatable/```echarts）
         patched = _augment_markdown_with_blocks(text)
-        m2 = _FENCE_RE.search(patched)
+        m2 = _VIZ_FENCE_RE.search(patched)
         if not m2:
             return patched, "text", None
         # 用增强后的内容继续解析
@@ -68,7 +98,7 @@ def _augment_markdown_with_blocks(text: str) -> str:
     若未包含 ```echarts/```datatable，则尝试从 Markdown pipe table 推断 datatable，
     并在可行时从表格推断一个简单的 ECharts option（折线或 K 线）。
     """
-    if _FENCE_RE.search(text):
+    if _VIZ_FENCE_RE.search(text):
         return text
 
     # 1) Markdown pipe table
@@ -326,6 +356,7 @@ async def chat_stream(
 
         answer, trace = await ask_task
         answer = merge_sql_from_exc_sql_trace(answer, trace)
+        answer = strip_exec_stdout_trailer(answer)
 
         # 按块流式输出（非 token 级，但足够驱动打字机效果）
         chunk_size = 120
@@ -334,13 +365,20 @@ async def chat_stream(
             yield _sse(json.dumps({"type": "delta", "content": chunk}, ensure_ascii=False)).encode("utf-8")
 
         content, content_type, extra = _parse_assistant_content(answer)
-        merged_extra = {"parsed": extra, "trace": trace} if (extra is not None or trace) else None
+        merged_extra: dict[str, Any] = {}
+        viz = _extract_viz_blocks(answer)
+        if trace:
+            merged_extra["trace"] = trace
+        if extra is not None:
+            merged_extra["parsed"] = extra
+        if viz:
+            merged_extra["viz"] = viz
         assistant_msg = Message(
             conversation_id=conv.id,
             role="assistant",
             content=content or "",
             content_type=content_type,
-            extra=merged_extra,
+            extra=merged_extra or None,
         )
         db.add(assistant_msg)
         await db.commit()

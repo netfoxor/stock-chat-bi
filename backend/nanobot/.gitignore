@@ -11,7 +11,3 @@ deploy/dist/
 
 # 环境变量
 .env
-
-# Chainlit 缓存
-.chainlit/cache/
-.chainlit/translations/

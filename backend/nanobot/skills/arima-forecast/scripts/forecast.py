@@ -3,13 +3,12 @@
 """
 arima-forecast / scripts / forecast.py
 
-CLI 入口：读近一年日线 → 拟合 ARIMA(5,1,5) → 预测 n 个交易日 → 输出
-markdown 表 + ECharts JSON 落盘 + stdout 回传占位。
+读近一年日线 → 拟合 ARIMA(5,1,5) → 预测 n 个交易日。
+stdout：说明行 + **`echarts` + `datatable`** 两道围栏（与主站会话 / 大屏契约一致），
+图表在前、明细表在后，便于渲染与「添加到大屏」；不写 pandas markdown 表。
 
 用法：
     python forecast.py --ts-code 600519.SH --n 10
-
-非零 exit code 表示失败，错误信息同时写 stdout 方便 LLM 读。
 """
 
 from __future__ import annotations
@@ -36,6 +35,7 @@ def _fail(msg: str, code: int = 1) -> int:
 
 def main() -> int:
     core.setup_utf8_stdout()
+    core.load_backend_dotenv_if_empty()
     parser = argparse.ArgumentParser(description="ARIMA 收盘价预测")
     parser.add_argument("--ts-code", required=True, help="Tushare 代码，如 600519.SH")
     parser.add_argument("--n", type=int, required=True, help="预测交易日数 1~60")
@@ -50,8 +50,11 @@ def main() -> int:
     if not (1 <= n <= core.MAX_FORECAST_DAYS):
         return _fail(f"预测天数超出范围，应为 1~{core.MAX_FORECAST_DAYS}，收到：{n}")
 
-    if not core.DB_PATH.is_file():
-        return _fail(f"未找到数据库文件 {core.DB_PATH}")
+    if not core.has_stock_database_access():
+        return _fail(
+            "未配置 DATABASE_URL：请设置环境变量 DATABASE_URL（MySQL），"
+            "与 backend/.env、exc_sql 同源，且库中存在 stock_daily。"
+        )
 
     try:
         df = core.load_year_history(ts_code)
@@ -71,7 +74,6 @@ def main() -> int:
     df = df.sort_values("trade_date").reset_index(drop=True)
     close = df["close"].astype(float)
 
-    # 拟合
     try:
         from statsmodels.tsa.arima.model import ARIMA
         with warnings.catch_warnings():
@@ -95,7 +97,6 @@ def main() -> int:
         "ci_upper_95": [round(float(v), 4) for v in ci.iloc[:, 1].values],
     })
 
-    # ECharts option
     hist_dates = [d.strftime("%Y-%m-%d") for d in df["trade_date"]]
     hist_close = core.round_list(close)
     fc_dates = out["forecast_date"].tolist()
@@ -106,20 +107,22 @@ def main() -> int:
         hist_dates, hist_close, fc_dates, fc_mean, fc_low, fc_high,
         title=f"{core.safe_label(stock_name)} ({ts_code}) · 近一年收盘 + ARIMA 预测 {n} 日",
     )
-    chart_md = core.save_echart_option(option, prefix="arima",
-                                       label=f"{stock_name} ARIMA 预测 {n} 日")
+    core.write_echart_asset(option, prefix="arima")
 
-    header = (
-        f"### {core.safe_label(stock_name)}（{ts_code}）未来 {n} 个交易日收盘价预测"
-        f"（ARIMA{core.ARIMA_ORDER}，基于近一年 {len(df)} 条日线）"
+    caption = (
+        f"_ARIMA 预测 · {core.safe_label(stock_name)}（{ts_code}）· 未来 {n} 个交易日 · "
+        f"ARIMA{core.ARIMA_ORDER} · {len(df)} 条日线 · "
+        f"会话内图表/表格可「添加到大屏」固定；不构成投资建议_"
     )
-    print(header)
+    print(caption)
     print()
-    print(out.to_markdown(index=False))
+    print(core.format_echarts_fence(option))
     print()
-    print(chart_md)
-    print()
-    print("_提示：ARIMA 属于技术分析方法，不能预测重大事件拐点，结果仅供参考，**不构成投资建议**。_")
+    tab_payload, tab_truncated = core.dataframe_to_antd_table_payload(out, max_rows=200)
+    if tab_truncated:
+        print(core.format_datatable_fence(tab_payload, truncation_note_rows=200))
+    else:
+        print(core.format_datatable_fence(tab_payload))
     return 0
 
 

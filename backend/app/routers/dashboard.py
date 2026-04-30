@@ -25,10 +25,18 @@ from app.schemas.dashboard import (
     WidgetUpdateRequest,
 )
 from app.services.dashboard_query import run_dashboard_query
+from app.services.dashboard_transforms import TRANSFORM_CATALOG
+
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
+
+
+@router.get("/transform-options")
+async def dashboard_transform_catalog():
+    """命名转换下拉列表（服务端注册）；前端可按需缓存。"""
+    return TRANSFORM_CATALOG
 
 
 @router.post("/query", response_model=SqlQueryResponse)
@@ -42,6 +50,7 @@ async def dashboard_sql_query(
     生成的 option（供图表组件刷新）。
     """
     sql = payload.sql.strip()
+    widget: DashboardWidget | None = None
     if payload.widget_id is not None:
         res = await db.execute(
             select(DashboardWidget).where(
@@ -49,12 +58,18 @@ async def dashboard_sql_query(
                 DashboardWidget.user_id == user.id,
             )
         )
-        w = res.scalar_one_or_none()
-        if w is None:
+        widget = res.scalar_one_or_none()
+        if widget is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Widget not found")
         if not sql:
-            cfg = w.config or {}
-            sql = str(cfg.get("sql") or "").strip()
+            wcfg = widget.config or {}
+            sql = str(wcfg.get("sql") or "").strip()
+
+    cfg = (widget.config or {}) if widget else {}
+    transform_chart_eff = (payload.transform_chart or "").strip() or str(cfg.get("transform_chart") or "").strip()
+    transform_table_eff = (payload.transform_table or "").strip() or str(cfg.get("transform_table") or "").strip()
+    transform_params_eff = dict(cfg.get("transform_params") or {})
+    transform_params_eff.update(dict(payload.transform_params or {}))
 
     if not sql:
         raise HTTPException(
@@ -69,6 +84,9 @@ async def dashboard_sql_query(
             limit=payload.limit,
             include_echarts=payload.include_echarts,
             database_url=settings.database_url,
+            transform_chart=transform_chart_eff,
+            transform_table=transform_table_eff,
+            transform_params=transform_params_eff,
         )
     except ValueError as e:
         logger.warning(

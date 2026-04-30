@@ -18,7 +18,7 @@
 运行方式：
   CLI  :  python stock_bot.py "用 ARIMA 预测贵州茅台未来 10 个交易日的收盘价"
   交互 :  python stock_bot.py
-  前端 :  chainlit run app_chainlit.py -w
+  Web  :  由仓库根目录 docker compose 启动 backend + frontend（FastAPI 内嵌本 bot）
 
 环境变量：
   - 方案 A（默认）：DashScope / 通义千问
@@ -32,6 +32,9 @@
 
   - 通用：
       NANOBOT_PROVIDER   可选：openai | dashscope（默认自动判断：有 OPENAI_API_KEY 则 openai，否则 dashscope）
+
+  用户请求默认经 `orchestrator/orchestrator.py`（keyword 选路 + ExecTool），再由 `nanobot_service` 或
+  本 CLI 统一入口下发。
 """
 
 from __future__ import annotations
@@ -48,6 +51,20 @@ import stock_core as core
 
 core.setup_utf8_stdout()
 
+
+def _load_backend_dotenv() -> None:
+    """与 FastAPI nanobot_service 一致：在未 export 的环境下读上一级 backend/.env。"""
+    try:
+        from dotenv import load_dotenv  # type: ignore
+    except ImportError:
+        return
+    p = core.WORKSPACE.parent / ".env"
+    if p.is_file():
+        load_dotenv(p, override=False)
+
+
+_load_backend_dotenv()
+
 from nanobot.agent.hook import AgentHook, AgentHookContext  # noqa: E402
 from nanobot.agent.loop import AgentLoop  # noqa: E402
 from nanobot.bus.queue import MessageBus  # noqa: E402
@@ -57,7 +74,6 @@ from nanobot.nanobot import Nanobot, _make_provider  # noqa: E402
 from self_heal_hook import SelfHealHook  # noqa: E402
 from stock_tools import load_all as load_stock_tools  # noqa: E402
 
-# app_chainlit 依赖 WORKSPACE，这里显式 re-export 保持兼容
 WORKSPACE = core.WORKSPACE
 
 
@@ -137,7 +153,8 @@ def build_bot() -> Nanobot:
 
     print(f"[nanobot] provider={defaults.provider}")
     print(f"[nanobot] model={defaults.model}")
-    print(f"[nanobot] DB={core.DB_PATH}")
+    db_ok = core.has_stock_database_access()
+    print(f"[nanobot] DATABASE_URL={'configured' if db_ok else 'MISSING'}")
     print(f"[nanobot] 已注册工具: {', '.join(loaded_names) or '（无）'}")
     print(f"[nanobot] 可用 skills: {', '.join(skill_names) or '（无）'}"
           f"（由 SkillsLoader 自动发现）")
@@ -145,14 +162,12 @@ def build_bot() -> Nanobot:
 
 
 async def _run_once(bot: Nanobot, question: str, session_key: str = "stock:cli") -> None:
-    # SelfHealHook 放在 PrintHook 之后，保证 before_execute_tools 的打印先于 healer 行动
-    result = await bot.run(
-        question,
-        session_key=session_key,
-        hooks=[PrintHook(), SelfHealHook()],
-    )
+    from orchestrator import orchestrate_turn  # noqa: PLC0415
+
+    hooks = [PrintHook(), SelfHealHook()]
+    text = await orchestrate_turn(question, bot=bot, session_key=session_key, hooks=hooks)
     print("\n" + "=" * 60)
-    print(result.content)
+    print(text)
     print("=" * 60)
 
 

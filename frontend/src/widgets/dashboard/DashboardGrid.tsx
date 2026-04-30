@@ -1,4 +1,4 @@
-import { Button, Card, Input, Modal, Segmented, Space, Typography } from "antd";
+import { Button, Card, Input, Modal, Segmented, Select, Space, Typography, message } from "antd";
 import { SettingOutlined } from "@ant-design/icons";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import GridLayout, { Layout, WidthProvider } from "react-grid-layout";
@@ -12,7 +12,19 @@ import "react-resizable/css/styles.css";
 
 const AutoWidthGridLayout = WidthProvider(GridLayout);
 
+const FALLBACK_CHART_TRANSFORMS = [
+  { id: "", label: "（默认）由 SQL 查询结果自动生成图" },
+  { id: "arima_forecast", label: "ARIMA：近一年收盘 + N 日预测（需 ts_code、n）" },
+  { id: "bollinger_bands", label: "布林带：MA20±2σ（需 ts_code；可选 start、end）" },
+];
+const FALLBACK_TABLE_TRANSFORMS = [
+  { id: "", label: "（默认）使用 SQL 查询结果表格" },
+  { id: "arima_forecast", label: "ARIMA：预测明细表（与图表转换数据源一致）" },
+  { id: "bollinger_bands", label: "布林带：日线序列与信号列（与图表转换同源）" },
+];
+
 type CronPreset = "off" | "1m" | "5m" | "15m" | "1h" | "custom";
+type ConfigModalTab = "sql" | "echarts" | "table" | "transform" | "poll" | "raw";
 
 /** 解析「每 N 分钟 / 每小时」类 cron，得到秒数；不支持则返回 null */
 function cronToIntervalSeconds(cron: string): number | null {
@@ -75,13 +87,62 @@ export function DashboardGrid() {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [configOpen, setConfigOpen] = useState(false);
   const [configWidget, setConfigWidget] = useState<any>(null);
-  const [configTab, setConfigTab] = useState<"sql" | "echarts" | "table" | "poll" | "raw">("sql");
+  const [configTab, setConfigTab] = useState<ConfigModalTab>("sql");
   const [sqlVal, setSqlVal] = useState("");
   const [cronPreset, setCronPreset] = useState<CronPreset>("off");
   const [cronVal, setCronVal] = useState("");
   const [echartsJson, setEchartsJson] = useState("{}");
   const [tableJson, setTableJson] = useState("{}");
+  const [transformChart, setTransformChart] = useState("");
+  const [transformTable, setTransformTable] = useState("");
+  const [transformParamsJson, setTransformParamsJson] = useState("{}");
+  const [transformCatalog, setTransformCatalog] = useState<{
+    chart: { id: string; label: string }[];
+    table: { id: string; label: string }[];
+  } | null>(null);
   const [rawJson, setRawJson] = useState<string>("{}");
+
+  useEffect(() => {
+    if (!configOpen) return;
+    api
+      .get("/dashboard/transform-options")
+      .then((res) => setTransformCatalog(res.data))
+      .catch(() => setTransformCatalog(null));
+  }, [configOpen]);
+
+  const modalTabOptions = useMemo(() => {
+    const wType = configWidget?.type;
+    if (wType === "chart") {
+      return [
+        { label: "SQL", value: "sql" satisfies ConfigModalTab },
+        { label: "图表转换", value: "transform" satisfies ConfigModalTab },
+        { label: "图表模板", value: "echarts" satisfies ConfigModalTab },
+        { label: "轮询", value: "poll" satisfies ConfigModalTab },
+        { label: "原始JSON", value: "raw" satisfies ConfigModalTab },
+      ];
+    }
+    if (wType === "table") {
+      return [
+        { label: "SQL", value: "sql" satisfies ConfigModalTab },
+        { label: "表格转换", value: "transform" satisfies ConfigModalTab },
+        { label: "表格选项", value: "table" satisfies ConfigModalTab },
+        { label: "轮询", value: "poll" satisfies ConfigModalTab },
+        { label: "原始JSON", value: "raw" satisfies ConfigModalTab },
+      ];
+    }
+    return [
+      { label: "SQL", value: "sql" satisfies ConfigModalTab },
+      { label: "转换", value: "transform" satisfies ConfigModalTab },
+      { label: "轮询", value: "poll" satisfies ConfigModalTab },
+      { label: "原始JSON", value: "raw" satisfies ConfigModalTab },
+    ];
+  }, [configWidget?.type]);
+
+  useEffect(() => {
+    if (!configOpen || !configWidget || modalTabOptions.length === 0) return;
+    const allowed = new Set(modalTabOptions.map((o) => o.value));
+    if (!allowed.has(configTab)) setConfigTab("sql");
+  }, [configOpen, configWidget, configTab, modalTabOptions]);
 
   const onLayoutChange = (l: Layout[]) => {
     updateLayoutBatch(l).catch(() => void 0);
@@ -182,6 +243,11 @@ export function DashboardGrid() {
                       setCronVal(ui.val);
                       setEchartsJson(JSON.stringify(cfg?.echarts ?? {}, null, 2));
                       setTableJson(JSON.stringify(cfg?.table ?? {}, null, 2));
+                      setTransformChart(String(cfg.transform_chart ?? ""));
+                      setTransformTable(String(cfg.transform_table ?? ""));
+                      setTransformParamsJson(
+                        JSON.stringify(cfg.transform_params ?? { ts_code: "600519.SH", n: 10 }, null, 2),
+                      );
                       setRawJson(JSON.stringify(cfg ?? {}, null, 2));
                       setConfigOpen(true);
                     }}
@@ -202,7 +268,7 @@ export function DashboardGrid() {
 
       <Modal
         open={configOpen}
-        title="组件配置"
+        title={configWidget?.type === "chart" ? "图表组件配置" : configWidget?.type === "table" ? "表格组件配置" : "组件配置"}
         okText="保存"
         cancelText="取消"
         onCancel={() => setConfigOpen(false)}
@@ -211,6 +277,12 @@ export function DashboardGrid() {
           try {
             const echartsObj = JSON.parse(echartsJson || "{}");
             const tableObj = JSON.parse(tableJson || "{}");
+            let tpObj: Record<string, unknown> = {};
+            try {
+              tpObj = JSON.parse(transformParamsJson || "{}") as Record<string, unknown>;
+            } catch {
+              throw new Error("转换参数必须是合法 JSON");
+            }
             const baseRaw = JSON.parse(rawJson || "{}");
             const cronStr =
               cronPreset === "off"
@@ -232,6 +304,9 @@ export function DashboardGrid() {
               sql: sqlVal,
               echarts: echartsObj,
               table: tableObj,
+              transform_chart: transformChart.trim(),
+              transform_table: transformTable.trim(),
+              transform_params: tpObj,
               poll: cronStr
                 ? { ...(baseRaw.poll ?? {}), cron: cronStr, interval_sec }
                 : { ...(baseRaw.poll ?? {}), cron: "", interval_sec: 0 },
@@ -239,47 +314,106 @@ export function DashboardGrid() {
 
             await updateWidget(configWidget.id, { config: merged });
             setConfigOpen(false);
-          } catch {
-            // ignore; 留给用户修 JSON
+          } catch (e) {
+            message.error(e instanceof Error ? e.message : "JSON 解析失败，请检查各标签页文本框内容");
           }
         }}
       >
         <Segmented
           block
           value={configTab}
-          onChange={(v) => setConfigTab(v as any)}
-          options={[
-            { label: "SQL", value: "sql" },
-            { label: "ECharts", value: "echarts" },
-            { label: "表格", value: "table" },
-            { label: "轮询", value: "poll" },
-            { label: "原始JSON", value: "raw" },
-          ]}
+          onChange={(v) => setConfigTab(v as ConfigModalTab)}
+          options={modalTabOptions}
           style={{ marginBottom: 12 }}
         />
 
         {configTab === "sql" && (
           <>
             <Typography.Paragraph type="secondary" style={{ marginBottom: 8 }}>
-              填写只读 SELECT（MySQL）。保存后表格/图表会按轮询间隔调用「/dashboard/query」拉取最新数据；图表会由服务端按查询结果重算 ECharts。
+              {configWidget?.type === "chart" ? (
+                <>
+                  填写只读 SELECT（MySQL）。轮询时请求「/dashboard/query」并由服务端生成<strong>图表</strong>所用数据；
+                  「图表模板」仅作占位 / 预览。
+                </>
+              ) : (
+                <>
+                  填写只读 SELECT（MySQL）。轮询时请求「/dashboard/query」刷新<strong>表格</strong>行数据；
+                  「表格选项」只覆盖样式与列配置。
+                </>
+              )}
+              <br />
+              若选用「ARIMA」「布林带」等转换而不依赖本条 SQL：可用占位语句，例如{" "}
+              <code style={{ whiteSpace: "nowrap" }}>SELECT 1 AS dummy</code>。
             </Typography.Paragraph>
             <Input.TextArea rows={8} value={sqlVal} onChange={(e) => setSqlVal(e.target.value)} placeholder="SELECT ..." />
           </>
         )}
 
-        {configTab === "echarts" && (
+        {configTab === "transform" && configWidget?.type === "chart" && (
           <>
             <Typography.Paragraph type="secondary" style={{ marginBottom: 8 }}>
-              初次展示或轮询开启前可用作静态模板；启用轮询后以接口返回的 option 为准（与聊天里添加大屏时的图表逻辑一致）。
+              在<strong>本条 SQL 查出结果之后</strong>，仅针对<strong>图表</strong>再走命名转换。
+              「ARIMA」「布林带」按参数从行情库重算 option，不要求 SQL 里已有对应指标字段。
+            </Typography.Paragraph>
+            <Typography.Text strong>图表转换（config.transform_chart）</Typography.Text>
+            <Select
+              style={{ width: "100%", marginTop: 6, marginBottom: 12 }}
+              value={transformChart || undefined}
+              allowClear
+              placeholder="默认：按查询结果智能出图"
+              options={(transformCatalog?.chart?.length ? transformCatalog.chart : FALLBACK_CHART_TRANSFORMS).map(
+                (o) => ({ value: o.id, label: o.label || o.id }),
+              )}
+              onChange={(v) => setTransformChart(v ?? "")}
+            />
+            <Typography.Text strong>转换参数（JSON）</Typography.Text>
+            <Typography.Paragraph type="secondary" style={{ marginTop: 6, marginBottom: 8 }}>
+              示例 · ARIMA：{"{"} &quot;ts_code&quot;: &quot;600519.SH&quot;, &quot;n&quot;: 10 {"}"} · 布林带：
+              {"{"} &quot;ts_code&quot;: &quot;600519.SH&quot;, &quot;start&quot;: &quot;2024-01-01&quot;,
+              &quot;end&quot;: &quot;2025-04-01&quot; {"}"}（布林带 start/end 可省略）
+            </Typography.Paragraph>
+            <Input.TextArea rows={8} value={transformParamsJson} onChange={(e) => setTransformParamsJson(e.target.value)} />
+          </>
+        )}
+        {configTab === "transform" && configWidget?.type === "table" && (
+          <>
+            <Typography.Paragraph type="secondary" style={{ marginBottom: 8 }}>
+              在<strong>本条 SQL 查出结果之后</strong>，仅针对<strong>表格</strong>再走命名转换。
+              「ARIMA」输出预测行；「布林带」输出日线+信号列；未选时使用 SQL 结果的列与数据。
+            </Typography.Paragraph>
+            <Typography.Text strong>表格转换（config.transform_table）</Typography.Text>
+            <Select
+              style={{ width: "100%", marginTop: 6, marginBottom: 12 }}
+              value={transformTable || undefined}
+              allowClear
+              placeholder="默认：直接使用 SQL 结果表格"
+              options={(transformCatalog?.table?.length ? transformCatalog.table : FALLBACK_TABLE_TRANSFORMS).map(
+                (o) => ({ value: o.id, label: o.label || o.id }),
+              )}
+              onChange={(v) => setTransformTable(v ?? "")}
+            />
+            <Typography.Text strong>转换参数（JSON）</Typography.Text>
+            <Typography.Paragraph type="secondary" style={{ marginTop: 6, marginBottom: 8 }}>
+              示例 · ARIMA：{"{"} &quot;ts_code&quot;: &quot;600519.SH&quot;, &quot;n&quot;: 10 {"}"} · 布林带：
+              {"{"} &quot;ts_code&quot;: &quot;600519.SH&quot;, &quot;start&quot;: &quot;2024-01-01&quot;,
+              &quot;end&quot;: &quot;2025-04-01&quot; {"}"}（布林带 start/end 可省略）
+            </Typography.Paragraph>
+            <Input.TextArea rows={8} value={transformParamsJson} onChange={(e) => setTransformParamsJson(e.target.value)} />
+          </>
+        )}
+        {configTab === "echarts" && configWidget?.type === "chart" && (
+          <>
+            <Typography.Paragraph type="secondary" style={{ marginBottom: 8 }}>
+              初次展示或轮询开启前的静态 ECharts「壳」；轮询后以接口返回的 option 为主（可被「图表转换」覆盖）。
             </Typography.Paragraph>
             <Input.TextArea rows={10} value={echartsJson} onChange={(e) => setEchartsJson(e.target.value)} />
           </>
         )}
 
-        {configTab === "table" && (
+        {configTab === "table" && configWidget?.type === "table" && (
           <>
             <Typography.Paragraph type="secondary" style={{ marginBottom: 8 }}>
-              Ant Design Table 覆盖项（列宽、分页等）；数据来自 SQL 刷新结果。
+              Ant Design Table 的列宽、滚动、分页等覆盖项（dataSource/columns 由 SQL 刷新与「表格转换」注入）。
             </Typography.Paragraph>
             <Input.TextArea rows={10} value={tableJson} onChange={(e) => setTableJson(e.target.value)} />
           </>

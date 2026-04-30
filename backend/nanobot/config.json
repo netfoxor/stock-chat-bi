@@ -20,7 +20,8 @@
     "web": { "enable": false },
     "exec": {
       "enable": true,
-      "timeout": 120
+      "timeout": 120,
+      "allowed_env_keys": ["DATABASE_URL"]
     },
     "restrict_to_workspace": false
   }

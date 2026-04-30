@@ -1,4 +1,4 @@
-import { Button, Divider, Layout, List, Modal, Space, Typography, Checkbox, message } from "antd";
+import { Button, Checkbox, Divider, Layout, List, Modal, Space, Tooltip, Typography, message } from "antd";
 import { MinusOutlined, RobotOutlined } from "@ant-design/icons";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../api/client";
@@ -12,11 +12,38 @@ import type { MessageOnboardingHighlight } from "./MessageItem";
 import { MessageItem } from "./MessageItem";
 import { extractSpecialBlocks } from "./renderers";
 
+/** 新建会话占位：能力与示例（与后端 orchestrator exc_sql / arima / bollinger 一致） */
+const CHAT_CAPABILITY_GROUPS: { title: string; body: string; samples: string[] }[] = [
+  {
+    title: "行情与排行（SQL）",
+    body: "可用自然语言问历史价格、涨跌、成交额/量排行等；回复中可能出现图表与表格，可点「添加到大屏」。",
+    samples: [
+      "贵州茅台 600519 最近一个月收盘价和成交量",
+      "2024年涨幅前20的股票有哪些",
+      "五粮液 000858.SZ 2024年1月到6月的日线行情",
+    ],
+  },
+  {
+    title: "ARIMA 收盘价预测",
+    body: "对单只股票预测未来若干交易日收盘价（含图表与表格）。可以说「10 个交易日」「一个月」等。",
+    samples: ["用ARIMA预测贵州茅台未来10个交易日收盘价", "688981.SH 预测未来22个交易日的收盘价"],
+  },
+  {
+    title: "布林带超买 / 超卖",
+    body: "在区间内计算布林带并标出触及上轨（超买）、下轨（超卖）的时点。可说日期区间或用「过去一年」。",
+    samples: [
+      "检测贵州茅台600519.SH布林带，区间2024-01-01到2025-03-31",
+      "宁德时代300750.SZ近一年布林带超买超卖",
+    ],
+  },
+];
+
 function findFirstAddableMessage(messages: any[]): { id: number; kind: "chart" | "table" } | null {
   for (const m of messages) {
     const { blocks } = extractSpecialBlocks(m.content ?? "");
-    const hasE = blocks.some((b) => b.kind === "echarts");
-    const hasT = blocks.some((b) => b.kind === "datatable");
+    const viz = m.extra?.viz as { echarts?: unknown; datatable?: unknown } | undefined;
+    const hasE = blocks.some((b) => b.kind === "echarts") || viz?.echarts != null;
+    const hasT = blocks.some((b) => b.kind === "datatable") || viz?.datatable != null;
     if (hasE) return { id: m.id, kind: "chart" };
     if (hasT) return { id: m.id, kind: "table" };
   }
@@ -51,6 +78,11 @@ export function ChatWindow() {
   );
   const [pos, setPos] = useState<{ left: number; top: number }>({ left: 0, top: 0 });
   const [open, setOpen] = useState(false);
+  const [quickFill, setQuickFill] = useState<{ nonce: number; text: string } | null>(null);
+
+  const pushExample = useCallback((text: string) => {
+    setQuickFill((prev) => ({ nonce: (prev?.nonce ?? 0) + 1, text }));
+  }, []);
   const [size, setSize] = useState<{ width: number; height: number }>({ width: 520, height: 640 });
 
   const sendBtnRef = useRef<HTMLAnchorElement | HTMLButtonElement | null>(null);
@@ -512,15 +544,49 @@ export function ChatWindow() {
               </div>
 
               <div ref={scrollRef} style={{ flex: 1, overflow: "auto", padding: "0 10px 10px", minHeight: 0 }}>
-                {messages.map((m: any) => (
-                  <MessageItem
-                    key={`${m.id}-${m.created_at}`}
-                    message={m}
-                    onboardingHighlight={
-                      onboardingTarget && m.id === onboardingTarget.id ? addHighlight : null
-                    }
-                  />
-                ))}
+                {!activeConversationId ? (
+                  <Typography.Paragraph type="secondary" style={{ marginTop: 16, marginBottom: 0 }}>
+                    请先在左侧列表点「新建」或选择一条会话，再在下方输入框提问。
+                  </Typography.Paragraph>
+                ) : messages.length === 0 && !running ? (
+                  <div style={{ marginTop: 12, maxWidth: 520 }}>
+                    <Typography.Paragraph style={{ marginBottom: 8 }}>
+                      <Typography.Text strong>可以问这些能力</Typography.Text>
+                    </Typography.Paragraph>
+                    <Typography.Paragraph type="secondary" style={{ fontSize: 13, marginBottom: 12 }}>
+                      系统会按你的问题自动选路：自然语言查库、ARIMA 预测、布林带检测等。带图表或表格的回复可点「添加到大屏」固定到看板。
+                    </Typography.Paragraph>
+                    {CHAT_CAPABILITY_GROUPS.map((g) => (
+                      <div key={g.title} style={{ marginBottom: 14 }}>
+                        <Typography.Text strong style={{ fontSize: 13 }}>
+                          {g.title}
+                        </Typography.Text>
+                        <Typography.Paragraph type="secondary" style={{ fontSize: 12, margin: "4px 0 8px" }}>
+                          {g.body}
+                        </Typography.Paragraph>
+                        <Space size={[6, 8]} wrap>
+                          {g.samples.map((s) => (
+                            <Tooltip key={s} title={`点击填入下方输入框：${s}`}>
+                              <Button size="small" type="default" onClick={() => pushExample(s)}>
+                                {s.length > 30 ? `${s.slice(0, 30)}…` : s}
+                              </Button>
+                            </Tooltip>
+                          ))}
+                        </Space>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  messages.map((m: any) => (
+                    <MessageItem
+                      key={`${m.id}-${m.created_at}`}
+                      message={m}
+                      onboardingHighlight={
+                        onboardingTarget && m.id === onboardingTarget.id ? addHighlight : null
+                      }
+                    />
+                  ))
+                )}
                 {running && (
                   <Typography.Text type="secondary" style={{ display: "block", padding: 8 }}>
                     正在生成中…
@@ -533,6 +599,7 @@ export function ChatWindow() {
                   onSend={onSend}
                   disabled={inputDisabled}
                   presetText={presetText}
+                  quickFill={quickFill}
                   onboardingInputReadOnly={phase === "send"}
                   sendButtonRef={sendBtnRef}
                 />

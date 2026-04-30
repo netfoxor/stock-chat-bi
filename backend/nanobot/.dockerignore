@@ -10,9 +10,6 @@ sessions/
 memory/
 charts/
 .files/
-.chainlit/cache/
-.chainlit/translations/
-
 # 开发环境
 .venv/
 venv/

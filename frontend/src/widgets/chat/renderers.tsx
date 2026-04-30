@@ -5,7 +5,9 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 
-const FENCE_RE_G = /```(echarts|datatable|sql)\n([\s\S]*?)\n```/gi;
+const FENCE_RE_G = /(?:^|\r?\n)```\s*(echarts|datatable|sql)\s*\r?\n([\s\S]*?)(?:\r?\n)+\s*```(?:\s*(?:\r?\n|$)|$)/gi;
+/** nanobot：`![alt](chart:charts/...) — 浏览器当普通图片 URL 会破图；内容由 ```echarts 承载 */
+const CHART_PROTOCOL_MD_RE = /!\[[^\]]*]\(chart:[^)]+\)/g;
 
 export type SpecialBlock =
   | { kind: "echarts" | "datatable"; data: any }
@@ -13,14 +15,15 @@ export type SpecialBlock =
 
 export function extractSpecialBlocks(markdown: string): { cleanMarkdown: string; blocks: SpecialBlock[] } {
   const blocks: SpecialBlock[] = [];
-  const cleanMarkdown = (markdown ?? "").replace(FENCE_RE_G, (_full, lang, body) => {
-    const kind = String(lang).toLowerCase() as "echarts" | "datatable" | "sql";
+  let working = markdown ?? "";
+  working = working.replace(FENCE_RE_G, (_full, lang, body) => {
+    const kind = String(lang).toLowerCase().trim() as "echarts" | "datatable" | "sql";
     if (kind === "sql") {
       blocks.push({ kind: "sql", data: String(body ?? "").trim() });
       return "";
     }
     try {
-      const data = JSON.parse(String(body).trim());
+      const data = JSON.parse(String(body ?? "").trim());
       blocks.push({ kind, data });
     } catch {
       // ignore invalid JSON blocks, but remove fence to keep UI clean
@@ -28,7 +31,9 @@ export function extractSpecialBlocks(markdown: string): { cleanMarkdown: string;
     return "";
   });
 
-  return { cleanMarkdown: cleanMarkdown.trim(), blocks };
+  const cleanMarkdown = working.replace(CHART_PROTOCOL_MD_RE, "").replace(/\n{3,}/g, "\n\n").trim();
+
+  return { cleanMarkdown, blocks };
 }
 
 export function MarkdownView(props: { content: string }) {

@@ -232,7 +232,7 @@ def _check_sql_pitfalls(sql: str) -> str | None:
 
 
 def _build_echarts_block(option: dict) -> str:
-    return "```echarts\n" + json.dumps(option, ensure_ascii=False) + "\n```"
+    return "```echarts\n" + core.dumps_json_for_fence(option) + "\n```"
 
 
 def _build_sql_block(sql: str) -> str:
@@ -246,23 +246,10 @@ def _build_datatable_block(df, *, max_rows: int = 200) -> str:
       {"columns":[{"title":"","dataIndex":""}], "data":[{...}]}
     为避免消息过大，最多输出 max_rows 行（默认 200）。
     """
-    from datetime import date, datetime
-    cols = [{"title": str(c), "dataIndex": str(c)} for c in df.columns.tolist()]
-    data = df.to_dict(orient="records")
-    # 将 date/datetime 对象转为字符串，避免 JSON 序列化失败
-    for row in data:
-        for k, v in row.items():
-            if isinstance(v, (date, datetime)):
-                row[k] = v.isoformat() if hasattr(v, "isoformat") else str(v)
-    truncated = False
-    if len(data) > max_rows:
-        data = data[:max_rows]
-        truncated = True
-    payload = {"columns": cols, "data": data}
-    block = "```datatable\n" + json.dumps(payload, ensure_ascii=False) + "\n```"
+    payload, truncated = core.dataframe_to_antd_table_payload(df, max_rows=max_rows)
     if truncated:
-        block = f"*（表格仅展示前 {max_rows} 行，已截断）*\n\n{block}"
-    return block
+        return core.format_datatable_fence(payload, truncation_note_rows=max_rows)
+    return core.format_datatable_fence(payload)
 
 
 def _empty_result_diagnosis(sql: str) -> str:

@@ -39,11 +39,6 @@ def _get_bot() -> Any:
     _ensure_nanobot_on_path()
     _load_env_files()
 
-    # 确保 MySQL 连接串能被 stock_core 读取
-    # 优先 STOCK_DATABASE_URL，其次 DATABASE_URL（两者由上层环境注入）
-    if not os.environ.get("STOCK_DATABASE_URL") and os.environ.get("DATABASE_URL"):
-        os.environ["STOCK_DATABASE_URL"] = os.environ["DATABASE_URL"]
-
     from stock_bot import build_bot  # type: ignore
 
     return build_bot()
@@ -58,8 +53,10 @@ async def ask(question: str, session_key: str, *, trace_sink: Any | None = None)
     trace_ctx.start_trace(sink=trace_sink)
     from trace_hook import TraceHook  # type: ignore
 
-    result = await bot.run(question, session_key=session_key, hooks=[TraceHook(), SelfHealHook()])
-    content = (result.content or "").strip()
+    hooks = [TraceHook(), SelfHealHook()]
+    from orchestrator import orchestrate_turn  # type: ignore
+
+    content = await orchestrate_turn(question, bot=bot, session_key=session_key, hooks=hooks)
     trace = trace_ctx.get_trace()
     return content, trace
 

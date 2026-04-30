@@ -62,6 +62,10 @@ class SqlQueryRequest(BaseModel):
     widget_id: int | None = None
     limit: int = Field(default=3000, ge=1, le=10000)
     include_echarts: bool = False
+    # 若为空字符串，路由层会用 widget.config 中的值兜底
+    transform_chart: str = ""
+    transform_table: str = ""
+    transform_params: dict[str, Any] = Field(default_factory=dict)
 
 
 class SqlQueryResponse(BaseModel):
